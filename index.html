@@ -1,32 +1,31 @@
 <!doctype html>
 <html lang="fr">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Perte de poids</title>
-<meta name="theme-color" content="#EFEDE6" />
-<meta name="mobile-web-app-capable" content="yes" />
-<meta name="apple-mobile-web-app-capable" content="yes" />
-<meta name="apple-mobile-web-app-status-bar-style" content="default" />
-<meta name="apple-mobile-web-app-title" content="Poids" />
-<link rel="manifest" href="./manifest.json" />
-<link rel="apple-touch-icon" href="./icons/icon.svg" />
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@300;400;500;600&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+<meta name="theme-color" content="#EFEDE6">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Poids">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./icons/icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@300;400;500;600&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; overflow: hidden; background: #EFEDE6; -webkit-tap-highlight-color: transparent; }
-  body { font-family: "Inter Tight", ui-sans-serif, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
-  #root { height: 100%; }
-  ::-webkit-scrollbar { display: none; }
-  * { scrollbar-width: none; }
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body,#root{width:100%;height:100%;background:#EFEDE6}
+body{font-family:"Inter Tight",ui-sans-serif,system-ui,sans-serif;-webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent}
+::-webkit-scrollbar{display:none}
+*{scrollbar-width:none}
 </style>
 </head>
 <body>
 <div id="root"></div>
-<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin></script>
-<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js"></script>
 <script type="text/babel">
 const { useState, useEffect, useRef } = React;
@@ -140,6 +139,16 @@ function normalise(s) {
 function searchLocal(q) {
   const n = normalise(q.trim());
   return FOOD_DB.filter(f => normalise(f.name).includes(n)).slice(0, 10);
+}
+
+function useIsMobile() {
+  const [mobile, setMobile] = useState(window.innerWidth < 700);
+  useEffect(() => {
+    const fn = () => setMobile(window.innerWidth < 700);
+    window.addEventListener("resize", fn);
+    return () => window.removeEventListener("resize", fn);
+  }, []);
+  return mobile;
 }
 
 const ACTIVITY_LEVELS = [
@@ -308,138 +317,114 @@ function ProjectionCurve({ history, todayWeight, goalWeight, daysToGoal, calorie
 }
 
 // ── AddMealSheet ──────────────────────────────────────────────────────────
-function useIsMobile() {
-  const [mobile, setMobile] = useState(() => window.innerWidth < 700);
-  useEffect(() => {
-    const fn = () => setMobile(window.innerWidth < 700);
-    window.addEventListener("resize", fn);
-    return () => window.removeEventListener("resize", fn);
-  }, []);
-  return mobile;
-}
-
-function normaliseQuery(s) {
-  // Supprime les accents et met en minuscules → "café" = "cafe", "Île" = "ile"
-  return s.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-}
-
-async function searchFood(query) {
-  const q = normaliseQuery(query);
-  const url = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(q)}&search_simple=1&json=1&page_size=10&fields=product_name,brands,nutriments`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
-  const data = await res.json();
-  return (data.products || [])
-    .filter(p => p.product_name)
-    .map(p => ({
-      name: p.product_name,
-      brand: p.brands ? p.brands.split(",")[0].trim() : "",
-      kcal: p.nutriments?.["energy-kcal_100g"] ?? null,
-    }))
-    .filter(p => p.kcal != null && p.kcal > 0)
-    .slice(0, 10);
-}
-
 function Spinner({ accent }) {
   return (
     <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
       {[0,1,2].map(i => (
-        <div key={i} style={{
-          width: 6, height: 6, borderRadius: "50%", background: accent,
-          animation: `dotPulse 1.2s ease-in-out ${i * 0.2}s infinite`,
-        }} />
+        <div key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: accent, animation: `dotPulse 1.2s ease-in-out ${i * 0.2}s infinite` }} />
       ))}
     </div>
   );
 }
 
-function AddMealSheet({ open, onClose, onSubmit, theme, accent, isMobile }) {
+async function searchFood(query) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 5000);
+  try {
+    const url = "https://world.openfoodfacts.org/cgi/search.pl?search_terms="
+      + encodeURIComponent(normaliseQuery(query))
+      + "&search_simple=1&json=1&page_size=10&fields=product_name,brands,nutriments";
+    const res = await fetch(url, { signal: ctrl.signal });
+    const data = await res.json();
+    const results = (data.products || [])
+      .filter(function(p) { return p.product_name; })
+      .map(function(p) {
+        var n = p.nutriments || {};
+        var kcal = n["energy-kcal_100g"] || (n["energy_100g"] ? Math.round(n["energy_100g"] / 4.184) : null);
+        return { name: p.product_name, brand: (p.brands || "").split(",")[0].trim(), kcal: kcal };
+      })
+      .filter(function(p) { return p.kcal && p.kcal > 0; })
+      .slice(0, 10);
+    return results.length > 0 ? results : searchLocal(query);
+  } catch(e) {
+    return searchLocal(query);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function AddMealSheet({ open, onClose, onSubmit, theme, accent }) {
   const [query, setQuery] = useState("");
   const [grams, setGrams] = useState(100);
-  const [customGrams, setCustomGrams] = useState("");
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState(null);
   const [editName, setEditName] = useState("");
 
-  const activeGrams = customGrams !== "" ? (parseInt(customGrams) || 0) : grams;
-
   useEffect(() => {
-    if (!open) {
-      setQuery(""); setGrams(100); setCustomGrams(""); setResults([]);
-      setLoading(false); setSelected(null); setEditName("");
-    }
+    if (!open) { setQuery(""); setGrams(100); setResults([]); setLoading(false); setSelected(null); setEditName(""); }
   }, [open]);
 
   useEffect(() => {
-    setSelected(null); setEditName("");
-    if (!query.trim()) { setResults([]); return; }
+    setSelected(null);
+    if (!query.trim()) { setResults([]); setLoading(false); return; }
     setLoading(true);
     const t = setTimeout(async () => {
-      try {
-        const r = await searchFood(query);
-        setResults(r);
-      } catch { setResults([]); }
-      finally { setLoading(false); }
-    }, 250);
+      const r = await searchFood(query);
+      setResults(r);
+      setLoading(false);
+    }, 350);
     return () => clearTimeout(t);
   }, [query]);
 
   const handleSelect = (item) => {
     setSelected(item);
-    setEditName(item.brand ? `${item.name} · ${item.brand}` : item.name);
+    setEditName(item.brand ? item.name + " · " + item.brand : item.name);
   };
 
   const handleAdd = () => {
     if (!selected) return;
-    const kcal = Math.round(selected.kcal * activeGrams / 100);
-    onSubmit(`${editName} (${activeGrams}g)`, kcal);
+    const kcal = Math.round(selected.kcal * grams / 100);
+    onSubmit(editName + " (" + grams + "g)", kcal);
   };
 
   if (!open) return null;
   return (
-    <div style={{ position: isMobile ? "fixed" : "absolute", inset: 0, zIndex: 50, display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
+    <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
       <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.18)", animation: "fadeIn 240ms ease" }} />
-      <div style={{ position: "relative", background: theme.surface, borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: "14px 22px 24px", animation: "sheetIn 320ms cubic-bezier(.2,.7,.2,1)", boxShadow: "0 -8px 40px rgba(0,0,0,0.16)", maxHeight: "78%", display: "flex", flexDirection: "column" }}>
+      <div style={{ position: "relative", background: theme.surface, borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: "14px 22px 24px", animation: "sheetIn 320ms cubic-bezier(.2,.7,.2,1)", boxShadow: "0 -8px 40px rgba(0,0,0,0.16)", maxHeight: "80%", display: "flex", flexDirection: "column" }}>
         <div style={{ width: 38, height: 4, borderRadius: 2, background: theme.hairline, margin: "0 auto 14px", flexShrink: 0 }} />
 
         {/* Search */}
         <div style={{ position: "relative", marginBottom: 10, flexShrink: 0 }}>
           <input autoFocus value={query} onChange={e => setQuery(e.target.value)}
-            placeholder="Nutella, yaourt nature, saumon…"
-            style={{ width: "100%", height: 44, borderRadius: 12, border: `1px solid ${loading ? accent : theme.hairline}`, background: theme.chipBg, color: theme.text, fontSize: 15, padding: "0 44px 0 14px", fontFamily: "inherit", outline: "none", boxSizing: "border-box", transition: "border-color 200ms" }}
+            placeholder="Nutella, banane, saumon…"
+            style={{ width: "100%", height: 46, borderRadius: 12, border: `1px solid ${loading ? accent : theme.hairline}`, background: theme.chipBg, color: theme.text, fontSize: 15, padding: "0 44px 0 14px", fontFamily: "inherit", outline: "none", boxSizing: "border-box", transition: "border-color 200ms" }}
           />
           <div style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)" }}>
-            {loading ? <Spinner accent={accent} /> : query.trim() ? (
-              <button onClick={() => setQuery("")} style={{ background: "none", border: "none", color: theme.fainter, cursor: "pointer", fontSize: 18, lineHeight: 1, padding: 0 }}>×</button>
+            {loading ? <Spinner accent={accent} /> : query ? (
+              <button onClick={() => setQuery("")} style={{ background: "none", border: "none", color: theme.fainter, cursor: "pointer", fontSize: 20, lineHeight: 1, padding: 0 }}>×</button>
             ) : null}
           </div>
         </div>
 
         {/* Quantity */}
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12, flexShrink: 0, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 11, color: theme.muted, textTransform: "uppercase", letterSpacing: "0.12em", marginRight: 2 }}>Quantité</span>
+          <span style={{ fontSize: 11, color: theme.muted, textTransform: "uppercase", letterSpacing: "0.12em" }}>Quantité</span>
           {[50, 100, 150, 200, 250].map(g => (
-            <button key={g} onClick={() => { setGrams(g); setCustomGrams(""); }} style={{ background: grams === g && customGrams === "" ? accent : theme.chipBg, color: grams === g && customGrams === "" ? "#fff" : theme.text, border: `1px solid ${grams === g && customGrams === "" ? accent : theme.hairline}`, padding: "5px 9px", borderRadius: 999, fontSize: 11, fontFamily: "inherit", cursor: "pointer" }}>{g}g</button>
+            <button key={g} onClick={() => setGrams(g)} style={{ background: grams === g ? accent : theme.chipBg, color: grams === g ? "#fff" : theme.text, border: `1px solid ${grams === g ? accent : theme.hairline}`, padding: "5px 10px", borderRadius: 999, fontSize: 11, fontFamily: "inherit", cursor: "pointer" }}>{g}g</button>
           ))}
-          <input type="number" value={customGrams} onChange={e => setCustomGrams(e.target.value)} placeholder="autre"
-            style={{ width: 60, height: 28, borderRadius: 999, border: `1px solid ${customGrams ? accent : theme.hairline}`, background: customGrams ? accent + "18" : theme.chipBg, color: theme.text, fontSize: 11, padding: "0 8px", fontFamily: "inherit", outline: "none", textAlign: "center" }} />
-          {customGrams && <span style={{ fontSize: 11, color: theme.fainter }}>g</span>}
         </div>
 
-        {/* Selected item edit */}
+        {/* Selected edit panel */}
         {selected && (
-          <div style={{ background: theme.chipBg, border: `1px solid ${accent}44`, borderRadius: 14, padding: "12px 14px", marginBottom: 10, flexShrink: 0 }}>
-            <div style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: theme.fainter, marginBottom: 6 }}>Modifier avant d'ajouter</div>
+          <div style={{ background: theme.chipBg, border: `1px solid ${accent}55`, borderRadius: 14, padding: "12px 14px", marginBottom: 10, flexShrink: 0 }}>
+            <div style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: theme.fainter, marginBottom: 6 }}>Modifier</div>
             <input value={editName} onChange={e => setEditName(e.target.value)}
               style={{ width: "100%", background: "transparent", border: "none", outline: "none", color: theme.text, fontSize: 14, fontFamily: "inherit", marginBottom: 8 }} />
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: 13, color: theme.muted }}>
-                {selected.kcal.toFixed(0)} kcal/100g →{" "}
-                <span style={{ color: accent, fontWeight: 500 }}>{Math.round(selected.kcal * activeGrams / 100)} kcal</span>
-              </span>
-              <button onClick={handleAdd} style={{ height: 36, padding: "0 18px", borderRadius: 18, border: "none", background: accent, color: "#fff", fontFamily: "inherit", fontSize: 13, fontWeight: 500, cursor: "pointer" }}>
-                Ajouter
-              </button>
+              <span style={{ fontSize: 13, color: theme.muted }}>{selected.kcal.toFixed(0)} kcal/100g → <span style={{ color: accent, fontWeight: 500 }}>{Math.round(selected.kcal * grams / 100)} kcal</span></span>
+              <button onClick={handleAdd} style={{ height: 36, padding: "0 18px", borderRadius: 18, border: "none", background: accent, color: "#fff", fontFamily: "inherit", fontSize: 13, fontWeight: 500, cursor: "pointer" }}>Ajouter</button>
             </div>
           </div>
         )}
@@ -451,23 +436,21 @@ function AddMealSheet({ open, onClose, onSubmit, theme, accent, isMobile }) {
           ) : !loading && results.length === 0 ? (
             <div style={{ fontSize: 13, color: theme.fainter, fontStyle: "italic", padding: "12px 0" }}>Aucun résultat</div>
           ) : results.map((item, i) => {
-            const computed = Math.round(item.kcal * activeGrams / 100);
+            const kcalCalc = Math.round(item.kcal * grams / 100);
             const isSel = selected === item;
             return (
-              <button key={i} onClick={() => handleSelect(item)} style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 10px", borderRadius: 10, marginBottom: 2, borderTop: "none", background: isSel ? accent + "18" : "transparent", border: isSel ? `1px solid ${accent}44` : "1px solid transparent", cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}>
+              <button key={i} onClick={() => handleSelect(item)} style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px", borderRadius: 10, marginBottom: 2, background: isSel ? accent + "18" : "transparent", border: `1px solid ${isSel ? accent + "44" : "transparent"}`, cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}>
                 <div style={{ flex: 1, marginRight: 12 }}>
                   <div style={{ fontSize: 14, color: theme.text, lineHeight: 1.3 }}>{item.name}</div>
                   {item.brand && <div style={{ fontSize: 11, color: theme.fainter, marginTop: 2 }}>{item.brand}</div>}
                 </div>
-                <span style={{ fontSize: 13, color: accent, fontVariantNumeric: "tabular-nums", flexShrink: 0, fontWeight: 500 }}>
-                  {computed} kcal
-                </span>
+                <span style={{ fontSize: 13, color: accent, fontVariantNumeric: "tabular-nums", flexShrink: 0, fontWeight: 500 }}>{kcalCalc} kcal</span>
               </button>
             );
           })}
         </div>
 
-        <button onClick={onClose} style={{ marginTop: 12, height: 42, borderRadius: 21, border: `1px solid ${theme.hairline}`, background: "transparent", color: theme.muted, fontFamily: "inherit", fontSize: 14, cursor: "pointer", flexShrink: 0 }}>Annuler</button>
+        <button onClick={onClose} style={{ marginTop: 12, height: 44, borderRadius: 22, border: `1px solid ${theme.hairline}`, background: "transparent", color: theme.muted, fontFamily: "inherit", fontSize: 14, cursor: "pointer", flexShrink: 0 }}>Annuler</button>
       </div>
     </div>
   );
@@ -578,32 +561,31 @@ function TabBar({ page, setPage, theme, accent }) {
 
 // ── App ───────────────────────────────────────────────────────────────────
 function App() {
-  function loadStorage() {
+  const isMobile = useIsMobile();
+  const init = (() => {
     try {
       return {
         accent: localStorage.getItem("wl-accent") || "#1F8A5B",
         dark: localStorage.getItem("wl-dark") === "true",
         profile: JSON.parse(localStorage.getItem("wl-profile")) || DEFAULT_PROFILE,
-        mealsByDay: JSON.parse(localStorage.getItem("wl-meals")) || { [TODAY]: seedMealsForDay(TODAY) },
+        meals: JSON.parse(localStorage.getItem("wl-meals")) || { [TODAY]: seedMealsForDay(TODAY) },
       };
-    } catch { return { accent: "#1F8A5B", dark: false, profile: DEFAULT_PROFILE, mealsByDay: { [TODAY]: seedMealsForDay(TODAY) } }; }
-  }
-  const init = loadStorage();
+    } catch { return { accent: "#1F8A5B", dark: false, profile: DEFAULT_PROFILE, meals: { [TODAY]: seedMealsForDay(TODAY) } }; }
+  })();
   const [accent, setAccent] = useState(init.accent);
   const [dark, setDark] = useState(init.dark);
   const [curveStyle, setCurveStyle] = useState("line");
   const [page, setPage] = useState("track");
   const [profile, setProfile] = useState(init.profile);
   const [selectedDay, setSelectedDay] = useState(TODAY);
-  const [mealsByDay, setMealsByDay] = useState(init.mealsByDay);
+  const [mealsByDay, setMealsByDay] = useState(init.meals);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [pulseKey, setPulseKey] = useState(0);
   const theme = getTheme(dark);
-
-  useEffect(() => { localStorage.setItem("wl-accent", accent); }, [accent]);
-  useEffect(() => { localStorage.setItem("wl-dark", dark); }, [dark]);
-  useEffect(() => { localStorage.setItem("wl-profile", JSON.stringify(profile)); }, [profile]);
-  useEffect(() => { localStorage.setItem("wl-meals", JSON.stringify(mealsByDay)); }, [mealsByDay]);
+  useEffect(() => { try { localStorage.setItem("wl-accent", accent); } catch {} }, [accent]);
+  useEffect(() => { try { localStorage.setItem("wl-dark", dark); } catch {} }, [dark]);
+  useEffect(() => { try { localStorage.setItem("wl-profile", JSON.stringify(profile)); } catch {} }, [profile]);
+  useEffect(() => { try { localStorage.setItem("wl-meals", JSON.stringify(mealsByDay)); } catch {} }, [mealsByDay]);
 
 
   const meals = mealsByDay[selectedDay] || [];
@@ -682,18 +664,21 @@ function App() {
   const selDate = new Date(selectedDay + "T12:00:00");
   const dayLabel = isToday ? "Aujourd'hui" : selDate.getDate() + " " + MONTH_FR[selDate.getMonth()];
 
+  const shell = isMobile
+    ? { width: "100%", height: "100%", borderRadius: 0, overflow: "hidden", position: "relative", background: theme.bg, color: theme.text, letterSpacing: "-0.01em", display: "flex", flexDirection: "column" }
+    : { width: "100%", maxWidth: 440, height: "92vh", maxHeight: 860, borderRadius: 32, overflow: "hidden", position: "relative", background: theme.bg, color: theme.text, boxShadow: "0 30px 60px rgba(0,0,0,0.18),0 0 0 1px rgba(0,0,0,0.08)", letterSpacing: "-0.01em", display: "flex", flexDirection: "column" };
+
   return (
-    <div style={{ minHeight: "100vh", width: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: dark ? "#1a1a18" : "#EFEDE6", fontFamily: '"Inter Tight", ui-sans-serif, system-ui, sans-serif', padding: 20, boxSizing: "border-box" }}>
+    <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: dark ? "#1a1a18" : "#EFEDE6", fontFamily: '"Inter Tight", ui-sans-serif, system-ui, sans-serif', padding: isMobile ? 0 : 20, boxSizing: "border-box" }}>
       <style>{`
         @keyframes mealIn { from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)} }
         @keyframes sheetIn { from{transform:translateY(100%)}to{transform:translateY(0)} }
         @keyframes fadeIn { from{opacity:0}to{opacity:1} }
         @keyframes dotPulse { 0%,80%,100%{transform:scale(0.5);opacity:0.3} 40%{transform:scale(1);opacity:1} }
         .meal-del:hover { background:rgba(180,40,40,0.10)!important; color:#B62828!important; }
-        ::-webkit-scrollbar { display: none; }
       `}</style>
 
-      <div style={{ width: "100%", maxWidth: 420, height: 820, maxHeight: "92vh", borderRadius: 32, overflow: "hidden", position: "relative", background: theme.bg, color: theme.text, boxShadow: "0 30px 60px rgba(0,0,0,0.18),0 0 0 1px rgba(0,0,0,0.08)", letterSpacing: "-0.01em", display: "flex", flexDirection: "column" }}>
+      <div style={shell}>
 
         <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}>
           {page === "track" ? (
@@ -774,15 +759,15 @@ function App() {
                 ))}
               </div>
 
-              {/* CTA - sticky bottom of scroll area */}
-              <div style={{ position: "sticky", bottom: 0, left: 0, right: 0, padding: "12px 20px 16px", background: `linear-gradient(to top, ${theme.bg} 65%, transparent)`, zIndex: 10, marginTop: -60 }}>
+              {/* CTA */}
+              <div style={{ position: "sticky", bottom: 0, padding: "12px 20px 16px", background: `linear-gradient(to top, ${theme.bg} 65%, transparent)`, marginTop: -60 }}>
                 <button onClick={() => setSheetOpen(true)} style={{ width: "100%", height: 54, borderRadius: 27, border: "none", background: theme.text, color: theme.bg, fontSize: 15, fontFamily: "inherit", fontWeight: 500, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: dark ? "0 8px 24px rgba(0,0,0,0.6)" : "0 8px 24px rgba(22,21,20,0.18)" }}>
                   <span style={{ fontSize: 20, fontWeight: 300, marginTop: -2 }}>+</span>
                   Ajouter un repas · {dayLabel}
                 </button>
               </div>
 
-              <AddMealSheet open={sheetOpen} onClose={() => setSheetOpen(false)} onSubmit={onLogMeal} theme={theme} accent={accent} isMobile={isMobile} />
+              <AddMealSheet open={sheetOpen} onClose={() => setSheetOpen(false)} onSubmit={onLogMeal} theme={theme} accent={accent} />
             </>
           ) : (
             <MetabolismPage profile={profile} setProfile={setProfile} theme={theme} accent={accent} />
@@ -800,8 +785,8 @@ ReactDOM.createRoot(document.getElementById("root")).render(<App />);
 </script>
 <script>
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./sw.js").catch(() => {});
+  window.addEventListener("load", function() {
+    navigator.serviceWorker.register("./sw.js").catch(function(){});
   });
 }
 </script>
