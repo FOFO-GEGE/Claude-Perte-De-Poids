@@ -331,16 +331,18 @@ async function searchFood(query) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 5000);
   try {
-    const url = "https://world.openfoodfacts.org/cgi/search.pl?search_terms="
+    const url = "https://world.openfoodfacts.org/api/v2/search?search_terms="
       + encodeURIComponent(normaliseQuery(query))
-      + "&search_simple=1&json=1&page_size=10&fields=product_name,brands,nutriments";
+      + "&fields=product_name,brands,nutriments&page_size=10";
     const res = await fetch(url, { signal: ctrl.signal });
     const data = await res.json();
     const results = (data.products || [])
       .filter(function(p) { return p.product_name; })
       .map(function(p) {
         var n = p.nutriments || {};
-        var kcal = n["energy-kcal_100g"] || (n["energy_100g"] ? Math.round(n["energy_100g"] / 4.184) : null);
+        var kcal = n["energy-kcal_100g"]
+          || n["energy-kcal"]
+          || (n["energy_100g"] ? Math.round(n["energy_100g"] / 4.184) : null);
         return { name: p.product_name, brand: (p.brands || "").split(",")[0].trim(), kcal: kcal };
       })
       .filter(function(p) { return p.kcal && p.kcal > 0; })
