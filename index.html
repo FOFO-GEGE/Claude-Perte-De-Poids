@@ -329,16 +329,23 @@ function Spinner({ accent }) {
 
 async function searchFood(query) {
   try {
-    const url = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(query)}&search_simple=1&json=1&page_size=10`;
+    const url = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(query)}&search_simple=1&json=1&page_size=15`;
     const res = await fetch(url);
     const data = await res.json();
     return (data.products || [])
       .filter(p => p.product_name)
-      .map(p => ({
-        name: p.product_name,
-        brand: p.brands ? p.brands.split(",")[0].trim() : "",
-        kcal: p.nutriments?.["energy-kcal_100g"] ?? null,
-      }))
+      .map(p => {
+        const n = p.nutriments || {};
+        const kcal = n["energy-kcal_100g"]
+          ?? n["energy-kcal"]
+          ?? (n["energy_100g"] ? Math.round(n["energy_100g"] / 4.184) : null)
+          ?? (n["energy"] ? Math.round(n["energy"] / 4.184) : null);
+        return {
+          name: p.product_name,
+          brand: p.brands ? p.brands.split(",")[0].trim() : "",
+          kcal,
+        };
+      })
       .filter(p => p.kcal != null && p.kcal > 0)
       .slice(0, 10);
   } catch {
