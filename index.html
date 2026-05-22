@@ -219,17 +219,21 @@ function DayStrip({ selectedDay, setSelectedDay, mealsByDay, theme, accent }) {
 }
 
 // ── Courbe ────────────────────────────────────────────────────────────────
-function ProjectionCurve({ history, todayWeight, goalWeight, daysToGoal, caloriePressure, style, accent, text, muted, hairline, pulseKey, height = 180 }) {
+function ProjectionCurve({ history, profileWeight, todayWeight, goalWeight, daysToGoal, accent, text, muted, hairline, pulseKey, height = 180 }) {
   const width = 360;
-  const xMin = history.length ? history[0].day : -14;
+
+  // Bornes temporelles et de poids
+  const allW = [...history.map(h => h.w), profileWeight, goalWeight];
+  const xMin = history.length ? Math.min(history[0].day, -1) : -1;
   const xMax = Math.max(8, Math.min(120, daysToGoal + 8));
-  const wMax = Math.max(todayWeight, ...history.map(h => h.w)) + 0.6;
-  const wMin = Math.min(goalWeight, ...history.map(h => h.w)) - 0.6;
+  const wMax = Math.max(...allW) + 0.8;
+  const wMin = Math.min(...allW) - 0.8;
   const padL = 18, padR = 28, padT = 20, padB = 24;
   const iW = width - padL - padR, iH = height - padT - padB;
   const x = d => padL + ((d - xMin) / (xMax - xMin)) * iW;
   const y = w => padT + ((wMax - w) / (wMax - wMin)) * iH;
-  const past = [...history, { day: 0, w: todayWeight }].sort((a, b) => a.day - b.day);
+
+  // Courbe réelle : points weightHistory triés
   const smooth = pts => {
     if (pts.length < 2) return "";
     let d = `M ${pts[0].x} ${pts[0].y}`;
@@ -239,26 +243,35 @@ function ProjectionCurve({ history, todayWeight, goalWeight, daysToGoal, calorie
     }
     return d;
   };
-  const pastPts = past.map(p => ({ x: x(p.day), y: y(p.w) }));
-  const pastD = smooth(pastPts);
-  const eX = x(Math.min(daysToGoal, xMax)), eY = y(goalWeight);
-  const sX = x(0), sY = y(todayWeight);
-  const bend = caloriePressure * Math.min(36, (eX - sX) * 0.18);
-  const futureD = `M ${sX} ${sY} Q ${(sX+eX)/2} ${(sY+eY)/2+bend} ${eX} ${eY}`;
-  const areaD = pastD ? `${pastD} L ${pastPts[pastPts.length-1].x} ${padT+iH} L ${pastPts[0].x} ${padT+iH} Z` : "";
+  const realPts = history.map(p => ({ x: x(p.day), y: y(p.w) }));
+  const realD = smooth(realPts);
+
+  // Courbe théorique : droite du poids profil (jour 0) vers l'objectif (jour daysToGoal)
+  const thStart = { x: x(0), y: y(profileWeight) };
+  const thEnd   = { x: x(Math.min(daysToGoal, xMax)), y: y(goalWeight) };
+  const thD = `M ${thStart.x} ${thStart.y} L ${thEnd.x} ${thEnd.y}`;
+
   const goalY = y(goalWeight);
+  const sX = x(0), sY = y(todayWeight);
+
   return (
     <svg viewBox={`0 0 ${width} ${height}`} width="100%" style={{ display: "block", overflow: "visible" }}>
+      {/* Ligne objectif */}
       <line x1={padL} x2={width-padR} y1={goalY} y2={goalY} stroke={hairline} strokeDasharray="2 4" strokeWidth="1" />
       <text x={width-padR+4} y={goalY+3} fontSize="10" fill={muted} fontFamily="ui-sans-serif">{goalWeight.toFixed(1)}</text>
-      {style === "area" && <path d={areaD} fill={accent} fillOpacity="0.07" />}
-      <path d={pastD} fill="none" stroke={text} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-      {pastPts.slice(0,-1).filter((_,i)=>i%2===0).map((p,i)=>(
-        <circle key={i} cx={p.x} cy={p.y} r="1.4" fill={text} fillOpacity="0.5" />
+
+      {/* Courbe théorique — pointillés accent */}
+      <path d={thD} fill="none" stroke={accent} strokeWidth="1.2" strokeLinecap="round" strokeDasharray="4 5" opacity="0.6" />
+      <circle cx={thEnd.x} cy={thEnd.y} r="2.8" fill="none" stroke={accent} strokeWidth="1.2" opacity="0.6" />
+      <circle cx={thEnd.x} cy={thEnd.y} r="1" fill={accent} opacity="0.6" />
+
+      {/* Courbe réelle — ligne pleine */}
+      {realD && <path d={realD} fill="none" stroke={text} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />}
+      {realPts.map((p, i) => (
+        <circle key={i} cx={p.x} cy={p.y} r="2.5" fill={text} />
       ))}
-      <path d={futureD} fill="none" stroke={accent} strokeWidth={style==="dotted"?1.2:1.4} strokeLinecap="round" strokeDasharray={style==="dotted"?"1 5":"4 5"} />
-      <circle cx={eX} cy={eY} r="3.2" fill="none" stroke={accent} strokeWidth="1.4" />
-      <circle cx={eX} cy={eY} r="1.1" fill={accent} />
+
+      {/* Point aujourd'hui */}
       <g key={pulseKey}>
         <circle cx={sX} cy={sY} r="3.6" fill={text} />
         <circle cx={sX} cy={sY} r="3.6" fill="none" stroke={text} strokeWidth="1.2" opacity="0.55">
@@ -266,8 +279,10 @@ function ProjectionCurve({ history, todayWeight, goalWeight, daysToGoal, calorie
           <animate attributeName="opacity" from="0.55" to="0" dur="1.4s" begin="0s" fill="freeze" />
         </circle>
       </g>
+
+      {/* Labels */}
       <text x={sX} y={height-4} fontSize="9" fill={muted} fontFamily="ui-sans-serif" textAnchor="middle" style={{letterSpacing:"0.1em",textTransform:"uppercase"}}>AUJ</text>
-      <text x={eX} y={height-4} fontSize="9" fill={muted} fontFamily="ui-sans-serif" textAnchor="middle" style={{letterSpacing:"0.1em",textTransform:"uppercase"}}>{daysToGoal}J</text>
+      <text x={thEnd.x} y={height-4} fontSize="9" fill={muted} fontFamily="ui-sans-serif" textAnchor="middle" style={{letterSpacing:"0.1em",textTransform:"uppercase"}}>{daysToGoal}J</text>
     </svg>
   );
 }
@@ -678,7 +693,7 @@ function App() {
                     <option value="line">Trait</option><option value="area">Aire</option><option value="dotted">Pointillé</option>
                   </select>
                 </div>
-                <ProjectionCurve history={historySeed} todayWeight={weightHistory[TODAY] ?? profile.weight} goalWeight={profile.goalWeight} daysToGoal={daysToGoal} caloriePressure={pressure} style={curveStyle} accent={accent} text={theme.text} muted={theme.muted} hairline={theme.hairline} pulseKey={pulseKey} />
+                <ProjectionCurve history={historySeed} profileWeight={profile.weight} todayWeight={weightHistory[TODAY] ?? profile.weight} goalWeight={profile.goalWeight} daysToGoal={daysToGoal} accent={accent} text={theme.text} muted={theme.muted} hairline={theme.hairline} pulseKey={pulseKey} />
               </div>
 
               {/* Calendrier */}
