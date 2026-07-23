@@ -2,7 +2,7 @@
   "name": "Perte de poids",
   "short_name": "Poids",
   "description": "Suivi de perte de poids avec calcul calorique",
-  "display": "standalone",
+  "display": "fullscreen",
   "orientation": "portrait",
   "theme_color": "#EFEDE6",
   "background_color": "#EFEDE6",
