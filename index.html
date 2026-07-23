@@ -1,0 +1,1193 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Perte de poids</title>
+<meta name="theme-color" content="#EFEDE6">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Poids">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./icon.svg">
+<link rel="icon" href="./icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@300;400;500;600&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body,#root{width:100%;height:100%;background:#EFEDE6}
+body{font-family:"Inter Tight",ui-sans-serif,system-ui,sans-serif;-webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent}
+::-webkit-scrollbar{display:none}
+*{scrollbar-width:none}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js"></script>
+<script src="./food-db.js"></script>
+<script type="text/babel">
+const { useState, useEffect, useRef, useMemo } = React;
+
+// ── Constantes partagées ──────────────────────────────────────────────────
+const KCAL_PER_KG = 7700;
+const MAX_SIM_DAYS = 400;
+const DAY_MS = 86400000;
+
+const DAY_FR       = ["D", "L", "M", "M", "J", "V", "S"];
+const DAY_FULL_FR  = ["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"];
+const MONTH_FR     = ["jan", "fév", "mar", "avr", "mai", "juin", "juil", "aoû", "sep", "oct", "nov", "déc"];
+const MONTH_FULL   = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
+
+const ACTIVITY_LEVELS = [
+  { value: 1.2,   label: "Sédentaire" },
+  { value: 1.375, label: "Légèrement actif" },
+  { value: 1.55,  label: "Modérément actif" },
+  { value: 1.725, label: "Très actif" },
+];
+const ACCENTS = ["#111111", "#1F8A5B", "#B65538", "#3B5BA9"];
+const DEFAULT_PROFILE = { weight: 68.4, height: 170, age: 30, sex: "homme", activity: 1.375, goalWeight: 62.0 };
+
+// ── Thème ─────────────────────────────────────────────────────────────────
+function getTheme(dark) {
+  return dark ? {
+    bg: "#0E0E0C", surface: "#161614", text: "#F4F2EC",
+    muted: "rgba(244,242,236,0.55)", fainter: "rgba(244,242,236,0.32)",
+    hairline: "rgba(244,242,236,0.10)", chipBg: "rgba(244,242,236,0.06)",
+  } : {
+    bg: "#FAF9F5", surface: "#FFFFFF", text: "#161514",
+    muted: "rgba(22,21,20,0.52)", fainter: "rgba(22,21,20,0.30)",
+    hairline: "rgba(22,21,20,0.10)", chipBg: "rgba(22,21,20,0.04)",
+  };
+}
+
+// ── Calculs métaboliques ──────────────────────────────────────────────────
+function calcBMR(p) {
+  const b = 10 * p.weight + 6.25 * p.height - 5 * p.age;
+  return p.sex === "homme" ? b + 5 : b - 161;
+}
+function calcTDEE(p)   { return Math.round(calcBMR(p) * p.activity); }
+function calcBudget(p) { return Math.max(1200, calcTDEE(p) - 500); }
+
+// ── Dates (tout en heure LOCALE — fix fuseau horaire) ─────────────────────
+function fmt(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+function parseDay(dateKey) {
+  return new Date(dateKey + "T12:00:00");
+}
+function addDays(date, n) {
+  const d = new Date(date); d.setDate(d.getDate() + n); return d;
+}
+// Nombre de jours entre deux clés de date (helper unique — plus de duplication)
+function dayOffset(dateKey, refKey) {
+  return Math.round((parseDay(dateKey) - parseDay(refKey)) / DAY_MS);
+}
+const TODAY = fmt(new Date());
+
+// ── Tween ─────────────────────────────────────────────────────────────────
+function useTween(value, ms = 600) {
+  const [v, setV] = useState(value);
+  const from = useRef(value);
+  useEffect(() => {
+    const start = performance.now();
+    const a = from.current, b = value;
+    let raf;
+    const tick = now => {
+      const t = Math.min(1, (now - start) / ms);
+      setV(a + (b - a) * (1 - Math.pow(1 - t, 3)));
+      if (t < 1) raf = requestAnimationFrame(tick); else from.current = b;
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [value, ms]);
+  return v;
+}
+
+const storage = {
+  get(key, fallback) {
+    try {
+      const v = localStorage.getItem(key);
+      if (v === null) return fallback;
+      const parsed = JSON.parse(v);
+      return parsed ?? fallback;
+    } catch { return fallback; }
+  },
+  set(key, value) {
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+  }
+};
+
+function useIsMobile() {
+  const [mobile, setMobile] = useState(window.innerWidth < 700);
+  useEffect(() => {
+    const fn = () => setMobile(window.innerWidth < 700);
+    window.addEventListener("resize", fn);
+    return () => window.removeEventListener("resize", fn);
+  }, []);
+  return mobile;
+}
+
+// ── Recherche d'aliments ──────────────────────────────────────────────────
+function normalise(s) {
+  return s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+function searchLocal(q) {
+  const n = normalise(q.trim());
+  if (!n) return [];
+  return FOOD_DB
+    .filter(f => normalise(f.name).includes(n))
+    .map(f => ({ name: f.name, brand: "", kcal: f.kcal, local: true }))
+    .slice(0, 10);
+}
+
+// Tri de pertinence : correspondance exacte > début de mot > contenu > nom court
+function rankResults(items, query) {
+  const q = normalise(query.trim());
+  return items
+    .map(it => {
+      const n = normalise(it.name);
+      let score = 3;
+      if (n === q) score = 0;
+      else if (n.startsWith(q)) score = 1;
+      else if (n.includes(q)) score = 2;
+      return { item: it, score, len: n.length };
+    })
+    .sort((a, b) => a.score - b.score || a.len - b.len)
+    .map(r => r.item);
+}
+
+// Portion : Open Food Facts expose serving_quantity (nombre) et/ou serving_size ("30 g")
+// La base locale n'a pas cette notion — les portions n'apparaissent que sur les produits OFF.
+function parseServing(p) {
+  const q = Number(p.serving_quantity);
+  if (q > 0 && q < 2000) return { grams: q, label: p.serving_size || `${q} g` };
+  if (p.serving_size) {
+    const m = String(p.serving_size).match(/([\d.,]+)\s*g/i);
+    if (m) {
+      const g = parseFloat(m[1].replace(",", "."));
+      if (g > 0 && g < 2000) return { grams: g, label: p.serving_size };
+    }
+  }
+  return null;
+}
+
+// Retourne { items, offline } — plus jamais de repli silencieux invisible
+async function searchFood(query) {
+  try {
+    const url = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(query)}&search_simple=1&json=1&page_size=25`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("http " + res.status);
+    const data = await res.json();
+    const items = (data.products || [])
+      .filter(p => p.product_name)
+      .map(p => {
+        const n = p.nutriments || {};
+        const kcal = n["energy-kcal_100g"]
+          ?? n["energy-kcal"]
+          ?? (n["energy_100g"] ? Math.round(n["energy_100g"] / 4.184) : null)
+          ?? (n["energy"] ? Math.round(n["energy"] / 4.184) : null);
+        return {
+          name: p.product_name,
+          brand: p.brands ? p.brands.split(",")[0].trim() : "",
+          kcal,
+          serving: parseServing(p),
+        };
+      })
+      .filter(p => p.kcal != null && p.kcal > 0);
+
+    // L'API répond mais ne trouve rien d'exploitable → on tente la base locale
+    if (items.length === 0) return { items: searchLocal(query), offline: false };
+    return { items: rankResults(items, query).slice(0, 12), offline: false };
+  } catch {
+    return { items: searchLocal(query), offline: true };
+  }
+}
+
+// ── Plan : dates ancrées (début figé + objectif théorique figé) ────────────
+function buildPlan(profile, startDate) {
+  const tdee = calcTDEE(profile);
+  const budget = calcBudget(profile);
+  const dailyDeficit = Math.max(1, tdee - budget);
+  const kgToLose = Math.max(0, profile.weight - profile.goalWeight);
+  const days = Math.max(1, Math.ceil(kgToLose * KCAL_PER_KG / dailyDeficit));
+  return {
+    startDate,
+    startWeight: profile.weight,
+    goalWeight: profile.goalWeight,
+    days,
+    goalDate: fmt(addDays(parseDay(startDate), days)),
+  };
+}
+
+// ── Simulation jour par jour (passé ET prévisionnel) ──────────────────────
+// Les jours renseignés utilisent les vraies calories, les autres le budget théorique.
+function simulate(plan, kcalByDay, tdee, budget) {
+  const pts = [{ day: 0, w: plan.startWeight }];
+  const start = parseDay(plan.startDate);
+  let w = plan.startWeight;
+  let reachedDay = null;
+
+  for (let d = 1; d <= MAX_SIM_DAYS; d++) {
+    const key = fmt(addDays(start, d - 1));
+    const eaten = kcalByDay[key] != null ? kcalByDay[key] : budget;
+    w = w - (tdee - eaten) / KCAL_PER_KG;
+    pts.push({ day: d, w });
+    if (w <= plan.goalWeight) { reachedDay = d; break; }
+  }
+  return { pts, reachedDay };
+}
+
+// ── Courbe ────────────────────────────────────────────────────────────────
+function smoothPath(pts) {
+  if (pts.length < 2) return "";
+  let d = `M ${pts[0].x} ${pts[0].y}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i-1] || pts[i], p1 = pts[i], p2 = pts[i+1], p3 = pts[i+2] || pts[i+1];
+    d += ` C ${p1.x+(p2.x-p0.x)/6} ${p1.y+(p2.y-p0.y)/6},${p2.x-(p3.x-p1.x)/6} ${p2.y-(p3.y-p1.y)/6},${p2.x} ${p2.y}`;
+  }
+  return d;
+}
+
+function fmtShortDate(dateKey) {
+  const d = parseDay(dateKey);
+  const y = d.getFullYear() !== new Date().getFullYear() ? " " + String(d.getFullYear()).slice(2) : "";
+  return `${d.getDate()} ${MONTH_FR[d.getMonth()]}${y}`;
+}
+
+function ProjectionCurve({
+  plan, sim, weighIns, todayDay, curveStyle, zoom,
+  accent, text, muted, hairline, pulseKey, height = 190
+}) {
+  const width = 340;
+  const padL = 18, padR = 34, padT = 22, padB = 24;
+  const iW = width - padL - padR, iH = height - padT - padB;
+
+  const projEnd = sim.reachedDay ?? (sim.pts.length - 1);
+
+  // Fenêtre X : 30 jours autour d'aujourd'hui, ou horizon complet
+  let xMin, xMax;
+  if (zoom === "30") {
+    xMin = Math.max(0, todayDay - 5);
+    xMax = xMin + 30;
+  } else {
+    xMin = 0;
+    xMax = Math.max(8, plan.days, projEnd, todayDay) + 4;
+  }
+  const span = xMax - xMin || 1;
+
+  // Poids théorique à un jour donné (droite fixe départ → objectif)
+  const theoAt = d => d >= plan.days
+    ? plan.goalWeight
+    : plan.startWeight + (plan.goalWeight - plan.startWeight) * (d / plan.days);
+
+  const visPts = sim.pts.filter(p => p.day >= xMin - 1 && p.day <= xMax + 1);
+  const visWeighIns = weighIns.filter(p => p.day >= xMin && p.day <= xMax);
+
+  const wVals = [
+    ...visPts.map(p => p.w),
+    theoAt(xMin), theoAt(Math.min(xMax, plan.days)),
+    ...visWeighIns.map(p => p.w),
+  ];
+  if (zoom !== "30") { wVals.push(plan.startWeight, plan.goalWeight); }
+  const pad = zoom === "30" ? 0.35 : 0.8;
+  const wMax = Math.max(...wVals) + pad;
+  const wMin = Math.min(...wVals) - pad;
+
+  const x = d => padL + ((d - xMin) / span) * iW;
+  const y = w => padT + ((wMax - w) / (wMax - wMin || 1)) * iH;
+
+  // Sous-échantillonnage au-delà de 160 points
+  const step = Math.max(1, Math.ceil(visPts.length / 160));
+  const shown = visPts.filter((_, i) => i % step === 0 || i === visPts.length - 1);
+  const projPts = shown.map(p => ({ x: x(p.day), y: y(p.w) }));
+  const projD = smoothPath(projPts);
+
+  // Théorique : segment visible uniquement
+  const tA = Math.max(xMin, 0), tB = Math.min(xMax, plan.days);
+  const thD = tB > tA ? `M ${x(tA)} ${y(theoAt(tA))} L ${x(tB)} ${y(theoAt(tB))}` : "";
+
+  const baseY = padT + iH;
+  const areaD = projD && projPts.length > 1
+    ? `${projD} L ${projPts[projPts.length-1].x} ${baseY} L ${projPts[0].x} ${baseY} Z`
+    : "";
+  const dash = curveStyle === "dotted" ? "1 5" : undefined;
+
+  const inView = d => d >= xMin && d <= xMax;
+  const goalVisible = plan.goalWeight >= wMin && plan.goalWeight <= wMax;
+  const todayX = x(Math.max(xMin, Math.min(todayDay, xMax)));
+  const todayW = sim.pts[Math.min(todayDay, sim.pts.length - 1)]?.w ?? plan.startWeight;
+  const clipId = "chartClip";
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} width="100%" style={{ display: "block", overflow: "visible" }}>
+      <defs>
+        <clipPath id={clipId}>
+          <rect x={padL} y={padT - 6} width={iW} height={iH + 12} />
+        </clipPath>
+      </defs>
+
+      {/* Ligne objectif */}
+      {goalVisible && <>
+        <line x1={padL} x2={width-padR} y1={y(plan.goalWeight)} y2={y(plan.goalWeight)} stroke={hairline} strokeDasharray="2 4" strokeWidth="1" />
+        <text x={width-padR+4} y={y(plan.goalWeight)+3} fontSize="10" fill={muted} fontFamily="ui-sans-serif">{plan.goalWeight.toFixed(1)}</text>
+      </>}
+
+      {/* Repère aujourd'hui */}
+      <line x1={todayX} x2={todayX} y1={padT} y2={baseY} stroke={hairline} strokeWidth="1" />
+
+      <g clipPath={`url(#${clipId})`}>
+        {/* Courbe THÉORIQUE — fixe, pointillés accent */}
+        {thD && <path d={thD} fill="none" stroke={accent} strokeWidth="1.2" strokeLinecap="round" strokeDasharray="4 5" opacity="0.55" />}
+
+        {/* Courbe PROJETÉE — pilotée par les calories */}
+        {curveStyle === "area" && areaD && <path d={areaD} fill={accent} opacity="0.10" stroke="none" />}
+        {projD && <path d={projD} fill="none" stroke={text} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" strokeDasharray={dash} />}
+
+        {/* Pesées réelles (optionnelles) */}
+        {visWeighIns.map((p, i) => (
+          <circle key={i} cx={x(p.day)} cy={y(p.w)} r="2.6" fill="none" stroke={accent} strokeWidth="1.4" />
+        ))}
+      </g>
+
+      {/* Fin THÉORIQUE — cercle creux */}
+      {inView(plan.days) && <>
+        <circle cx={x(plan.days)} cy={y(plan.goalWeight)} r="3.4" fill="none" stroke={accent} strokeWidth="1.4" opacity="0.75" />
+        <text x={x(plan.days)} y={y(plan.goalWeight) - 8} fontSize="8.5" fill={accent} opacity="0.8" fontFamily="ui-sans-serif" textAnchor="middle">TH</text>
+      </>}
+
+      {/* Fin PROJETÉE — cercle plein */}
+      {sim.reachedDay != null && inView(sim.reachedDay) && <>
+        <circle cx={x(sim.reachedDay)} cy={y(plan.goalWeight)} r="3.4" fill={text} />
+        <text x={x(sim.reachedDay)} y={y(plan.goalWeight) + 14} fontSize="8.5" fill={text} fontFamily="ui-sans-serif" textAnchor="middle">PROJ</text>
+      </>}
+
+      {/* Point aujourd'hui */}
+      <g key={pulseKey}>
+        <circle cx={todayX} cy={y(todayW)} r="3.6" fill={text} />
+        <circle cx={todayX} cy={y(todayW)} r="3.6" fill="none" stroke={text} strokeWidth="1.2" opacity="0.55">
+          <animate attributeName="r" from="3.6" to="22" dur="1.4s" begin="0s" fill="freeze" />
+          <animate attributeName="opacity" from="0.55" to="0" dur="1.4s" begin="0s" fill="freeze" />
+        </circle>
+      </g>
+
+      {/* Labels d'axe */}
+      <text x={todayX} y={height-4} fontSize="9" fill={muted} fontFamily="ui-sans-serif" textAnchor="middle" style={{letterSpacing:"0.1em"}}>AUJ</text>
+      <text x={width-padR} y={height-4} fontSize="9" fill={muted} fontFamily="ui-sans-serif" textAnchor="end" style={{letterSpacing:"0.1em"}}>
+        {zoom === "30" ? "+" + (xMax - todayDay) + "J" : (sim.reachedDay != null ? sim.reachedDay + "J" : ">" + MAX_SIM_DAYS + "J")}
+      </text>
+    </svg>
+  );
+}
+
+// ── Calendrier horizontal ─────────────────────────────────────────────────
+function DayStrip({ selectedDay, setSelectedDay, mealsByDay, theme, accent }) {
+  const PAST = 30, FUTURE = 60;   // plage réduite (91 jours au lieu de 361)
+  const days = useMemo(
+    () => Array.from({ length: PAST + FUTURE + 1 }, (_, i) => addDays(new Date(), i - PAST)),
+    []
+  );
+  const scrollRef = useRef(null);
+  const [visibleMonth, setVisibleMonth] = useState("");
+
+  useEffect(() => {
+    if (!scrollRef.current) return;
+    const el = scrollRef.current.querySelector(`[data-key='${selectedDay}']`);
+    if (el) el.scrollIntoView({ inline: "center", behavior: "smooth", block: "nearest" });
+  }, [selectedDay]);
+
+  // Mois affiché : mesuré sur les éléments réels (plus de largeur codée en dur)
+  const updateVisibleMonth = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const center = el.scrollLeft + el.clientWidth / 2;
+    let best = null, bestDist = Infinity;
+    for (const child of el.children) {
+      const c = child.offsetLeft + child.offsetWidth / 2;
+      const dist = Math.abs(c - center);
+      if (dist < bestDist) { bestDist = dist; best = child; }
+    }
+    const key = best && best.getAttribute("data-key");
+    if (key) {
+      const d = parseDay(key);
+      setVisibleMonth(`${MONTH_FULL[d.getMonth()]} ${d.getFullYear()}`);
+    }
+  };
+
+  useEffect(() => { updateVisibleMonth(); }, [selectedDay]);
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 24px 8px" }}>
+        <div style={{ fontSize: 10.5, letterSpacing: "0.14em", textTransform: "uppercase", color: theme.fainter }}>
+          {visibleMonth || "Calendrier"}
+        </div>
+        {selectedDay !== TODAY && (
+          <button onClick={() => setSelectedDay(TODAY)}
+            style={{ background: "transparent", border: `1px solid ${theme.hairline}`, color: theme.muted, fontSize: 10, padding: "4px 10px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+            Aujourd'hui
+          </button>
+        )}
+      </div>
+      <div ref={scrollRef} onScroll={updateVisibleMonth}
+        style={{ display: "flex", overflowX: "auto", gap: 6, padding: "0 18px 2px", scrollbarWidth: "none" }}>
+        {days.map(d => {
+          const key = fmt(d);
+          const isSelected = key === selectedDay;
+          const isToday = key === TODAY;
+          const isFuture = key > TODAY;
+          const hasMeals = (mealsByDay[key] || []).length > 0;
+          return (
+            <button key={key} data-key={key} onClick={() => setSelectedDay(key)}
+              style={{
+                flexShrink: 0, width: 44, display: "flex", flexDirection: "column", alignItems: "center",
+                gap: 4, padding: "10px 0 8px", borderRadius: 14, border: "none",
+                background: isSelected ? accent : "transparent",
+                opacity: isFuture && !isSelected ? 0.62 : 1,
+                cursor: "pointer", transition: "background 200ms",
+              }}>
+              <span style={{ fontSize: 9.5, letterSpacing: "0.08em", textTransform: "uppercase", color: isSelected ? "rgba(255,255,255,0.7)" : theme.fainter }}>
+                {DAY_FR[d.getDay()]}
+              </span>
+              <span style={{ fontSize: 15, fontWeight: isToday ? 600 : 400, color: isSelected ? "#fff" : theme.text, lineHeight: 1 }}>
+                {d.getDate()}
+              </span>
+              <span style={{ fontSize: 8.5, color: isSelected ? "rgba(255,255,255,0.55)" : theme.fainter }}>
+                {MONTH_FR[d.getMonth()]}
+              </span>
+              <div style={{ width: 4, height: 4, borderRadius: "50%", background: hasMeals ? (isSelected ? "rgba(255,255,255,0.8)" : accent) : "transparent" }} />
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── AddMealSheet ──────────────────────────────────────────────────────────
+function Spinner({ accent }) {
+  return (
+    <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+      {[0,1,2].map(i => (
+        <div key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: accent, animation: `dotPulse 1.2s ease-in-out ${i * 0.2}s infinite` }} />
+      ))}
+    </div>
+  );
+}
+
+function AddMealSheet({ open, onClose, onSave, onDelete, theme, accent, dayLabel, editing }) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [selected, setSelected] = useState(null);
+  const [editName, setEditName] = useState("");
+  const [hasSearched, setHasSearched] = useState(false);
+  const [offline, setOffline] = useState(false);
+  const [unit, setUnit] = useState("g");
+  const [rawQty, setRawQty] = useState("100");
+  const [manualKcal, setManualKcal] = useState("");
+
+  const isEdit = !!editing;
+
+  useEffect(() => {
+    if (!open) return;
+    setQuery(""); setResults([]); setLoading(false); setHasSearched(false); setOffline(false);
+    if (editing) {
+      setEditName(editing.name);
+      if (editing.kcalPer100 != null) {
+        setSelected({
+          name: editing.name, brand: "", kcal: editing.kcalPer100,
+          serving: editing.servingSize ? { grams: editing.servingSize, label: editing.servingLabel || editing.servingSize + " g" } : null,
+        });
+        setUnit(editing.unit || "g");
+        setRawQty(String(editing.qty != null ? editing.qty : 100));
+        setManualKcal("");
+      } else {
+        // Repas ancien : pas de kcal/100 g mémorisées → édition directe des calories
+        setSelected(null);
+        setManualKcal(String(editing.kcal ?? ""));
+      }
+    } else {
+      setSelected(null); setEditName(""); setUnit("g"); setRawQty("100"); setManualKcal("");
+    }
+  }, [open, editing]);
+
+  const runSearch = async () => {
+    const q = query.trim();
+    if (!q || loading) return;
+    setLoading(true); setOffline(false);
+    const { items, offline: off } = await searchFood(q);
+    setResults(items); setOffline(off); setHasSearched(true); setLoading(false);
+  };
+
+  const handleSelect = (item) => {
+    setSelected(item);
+    setEditName(item.brand ? item.name + " · " + item.brand : item.name);
+    setManualKcal("");
+    if (item.serving) { setUnit("portion"); setRawQty("1"); }
+    else { setUnit("g"); setRawQty("100"); }
+  };
+
+  const qty = parseFloat(String(rawQty).replace(",", ".")) || 0;
+  const serving = selected && selected.serving;
+  const grams = unit === "portion" && serving ? qty * serving.grams : qty;
+  const computedKcal = selected ? Math.round(selected.kcal * grams / 100) : 0;
+  const manualKcalNum = parseInt(manualKcal, 10);
+  const canSave = selected ? (qty > 0 && editName.trim() !== "") : (!isNaN(manualKcalNum) && manualKcalNum >= 0 && editName.trim() !== "");
+
+  const handleSave = () => {
+    if (!canSave) return;
+    if (selected) {
+      onSave({
+        name: editName.trim(),
+        kcal: computedKcal,
+        kcalPer100: selected.kcal,
+        qty, unit,
+        servingSize: serving ? serving.grams : null,
+        servingLabel: serving ? serving.label : null,
+      });
+    } else {
+      onSave({ name: editName.trim(), kcal: manualKcalNum, kcalPer100: null, qty: null, unit: null });
+    }
+  };
+
+  const QTY_PRESETS = unit === "portion" ? [0.5, 1, 1.5, 2, 3] : [30, 50, 100, 150, 200, 250];
+
+  if (!open) return null;
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
+      <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.18)", animation: "fadeIn 240ms ease" }} />
+      <div style={{ position: "relative", background: theme.surface, borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: "14px 22px 24px", animation: "sheetIn 320ms cubic-bezier(.2,.7,.2,1)", boxShadow: "0 -8px 40px rgba(0,0,0,0.16)", maxHeight: "88%", display: "flex", flexDirection: "column" }}>
+        <div style={{ width: 38, height: 4, borderRadius: 2, background: theme.hairline, margin: "0 auto 12px", flexShrink: 0 }} />
+
+        <div style={{ fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: theme.fainter, marginBottom: 10, flexShrink: 0 }}>
+          {isEdit ? "Modifier" : "Ajouter"} · {dayLabel}
+        </div>
+
+        {/* Recherche : champ + bouton */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 10, flexShrink: 0 }}>
+          <div style={{ position: "relative", flex: 1 }}>
+            <input autoFocus={!isEdit} value={query}
+              onChange={e => setQuery(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter") runSearch(); }}
+              placeholder={isEdit ? "Remplacer l'aliment…" : "Nutella, banane, saumon…"}
+              style={{ width: "100%", height: 46, borderRadius: 12, border: `1px solid ${loading ? accent : theme.hairline}`, background: theme.chipBg, color: theme.text, fontSize: 15, padding: "0 38px 0 14px", fontFamily: "inherit", outline: "none", boxSizing: "border-box", transition: "border-color 200ms" }}
+            />
+            {query && !loading && (
+              <button onClick={() => { setQuery(""); setResults([]); setHasSearched(false); }}
+                style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: theme.fainter, cursor: "pointer", fontSize: 20, lineHeight: 1, padding: 0 }}>×</button>
+            )}
+          </div>
+          <button onClick={runSearch} disabled={!query.trim() || loading}
+            style={{ height: 46, padding: "0 18px", borderRadius: 12, border: "none", background: query.trim() && !loading ? accent : theme.chipBg, color: query.trim() && !loading ? "#fff" : theme.fainter, fontFamily: "inherit", fontSize: 14, fontWeight: 500, cursor: query.trim() && !loading ? "pointer" : "default", flexShrink: 0, minWidth: 104, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            {loading ? <Spinner accent="#fff" /> : "Rechercher"}
+          </button>
+        </div>
+
+        {/* Panneau aliment : quantité + validation */}
+        {(selected || isEdit) && (
+          <div style={{ background: theme.chipBg, border: `1px solid ${accent}55`, borderRadius: 14, padding: "12px 14px", marginBottom: 10, flexShrink: 0 }}>
+            <input value={editName} onChange={e => setEditName(e.target.value)} placeholder="Nom du repas"
+              style={{ width: "100%", background: "transparent", border: "none", outline: "none", color: theme.text, fontSize: 14, fontFamily: "inherit", marginBottom: 10 }} />
+
+            {selected ? (
+              <>
+                {/* Unité : grammes / portion */}
+                <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                  {["g", "portion"].map(u => {
+                    const disabled = u === "portion" && !serving;
+                    return (
+                      <button key={u} disabled={disabled}
+                        onClick={() => {
+                          setUnit(u);
+                          setRawQty(u === "portion" ? "1" : "100");
+                        }}
+                        style={{ flex: 1, height: 32, borderRadius: 999, border: `1px solid ${unit === u ? accent : theme.hairline}`, background: unit === u ? accent : "transparent", color: unit === u ? "#fff" : (disabled ? theme.fainter : theme.text), fontSize: 12, fontFamily: "inherit", cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.45 : 1 }}>
+                        {u === "g" ? "Grammes" : "Portion"}
+                      </button>
+                    );
+                  })}
+                </div>
+                {unit === "portion" && serving && (
+                  <div style={{ fontSize: 11, color: theme.fainter, marginBottom: 8 }}>
+                    1 portion = {serving.label}
+                  </div>
+                )}
+                {!serving && (
+                  <div style={{ fontSize: 11, color: theme.fainter, marginBottom: 8 }}>
+                    Aucune portion connue pour cet aliment.
+                  </div>
+                )}
+
+                {/* Quantité : préréglages + saisie libre */}
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+                  {QTY_PRESETS.map(v => (
+                    <button key={v} onClick={() => setRawQty(String(v))}
+                      style={{ background: qty === v ? accent : "transparent", color: qty === v ? "#fff" : theme.text, border: `1px solid ${qty === v ? accent : theme.hairline}`, padding: "5px 10px", borderRadius: 999, fontSize: 11, fontFamily: "inherit", cursor: "pointer" }}>
+                      {unit === "portion" ? "×" + v : v + "g"}
+                    </button>
+                  ))}
+                  <input type="text" inputMode="decimal" value={rawQty} onChange={e => setRawQty(e.target.value)}
+                    style={{ width: 64, height: 30, borderRadius: 999, border: `1px solid ${theme.hairline}`, background: "transparent", color: theme.text, fontSize: 12, padding: "0 10px", fontFamily: "inherit", outline: "none", textAlign: "center" }} />
+                </div>
+
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: 12, color: theme.muted }}>
+                    {selected.kcal.toFixed(0)} kcal/100g{unit === "portion" && serving ? ` · ${Math.round(grams)} g` : ""} → <span style={{ color: accent, fontWeight: 500, fontSize: 13 }}>{computedKcal} kcal</span>
+                  </span>
+                  <button onClick={handleSave} disabled={!canSave}
+                    style={{ height: 36, padding: "0 18px", borderRadius: 18, border: "none", background: canSave ? accent : theme.hairline, color: "#fff", fontFamily: "inherit", fontSize: 13, fontWeight: 500, cursor: canSave ? "pointer" : "default" }}>
+                    {isEdit ? "Enregistrer" : "Ajouter"}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ fontSize: 11, color: theme.fainter, marginBottom: 8 }}>
+                  Repas saisi avant la mise à jour — quantité inconnue. Modifie les calories directement, ou relance une recherche pour repartir d'un aliment.
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                  <input type="number" inputMode="numeric" value={manualKcal} onChange={e => setManualKcal(e.target.value)}
+                    style={{ flex: 1, height: 36, borderRadius: 10, border: `1px solid ${theme.hairline}`, background: "transparent", color: theme.text, fontSize: 14, padding: "0 12px", fontFamily: "inherit", outline: "none" }} />
+                  <span style={{ fontSize: 12, color: theme.muted }}>kcal</span>
+                  <button onClick={handleSave} disabled={!canSave}
+                    style={{ height: 36, padding: "0 18px", borderRadius: 18, border: "none", background: canSave ? accent : theme.hairline, color: "#fff", fontFamily: "inherit", fontSize: 13, fontWeight: 500, cursor: canSave ? "pointer" : "default" }}>Enregistrer</button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Résultats */}
+        <div style={{ flex: 1, overflowY: "auto", minHeight: 50 }}>
+          {offline && (
+            <div style={{ fontSize: 12, color: "#B65538", padding: "6px 0 10px" }}>
+              Connexion indisponible — résultats issus de la base locale.
+            </div>
+          )}
+          {!hasSearched ? (
+            !isEdit && <div style={{ fontSize: 12, color: theme.fainter, padding: "8px 0" }}>
+              Tapez l'aliment en entier, puis Rechercher — accents optionnels.
+            </div>
+          ) : results.length === 0 ? (
+            <div style={{ fontSize: 13, color: theme.fainter, fontStyle: "italic", padding: "12px 0" }}>
+              Aucun résultat pour « {query.trim()} ».
+            </div>
+          ) : results.map((item, i) => {
+            const isSel = selected === item;
+            return (
+              <button key={i} onClick={() => handleSelect(item)}
+                style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px", borderRadius: 10, marginBottom: 2, background: isSel ? accent + "18" : "transparent", border: `1px solid ${isSel ? accent + "44" : "transparent"}`, cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}>
+                <div style={{ flex: 1, marginRight: 12 }}>
+                  <div style={{ fontSize: 14, color: theme.text, lineHeight: 1.3 }}>{item.name}</div>
+                  <div style={{ fontSize: 11, color: theme.fainter, marginTop: 2 }}>
+                    {item.local ? "base locale" : item.brand}
+                    {item.serving ? (item.local || item.brand ? " · " : "") + "portion " + item.serving.label : ""}
+                  </div>
+                </div>
+                <span style={{ fontSize: 13, color: accent, fontVariantNumeric: "tabular-nums", flexShrink: 0, fontWeight: 500 }}>{Math.round(item.kcal)} <span style={{ fontSize: 10, color: theme.fainter }}>/100g</span></span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div style={{ display: "flex", gap: 8, marginTop: 12, flexShrink: 0 }}>
+          <button onClick={onClose}
+            style={{ flex: 1, height: 44, borderRadius: 22, border: `1px solid ${theme.hairline}`, background: "transparent", color: theme.muted, fontFamily: "inherit", fontSize: 14, cursor: "pointer" }}>Annuler</button>
+          {isEdit && (
+            <button onClick={onDelete}
+              style={{ height: 44, padding: "0 20px", borderRadius: 22, border: `1px solid ${theme.hairline}`, background: "transparent", color: "#B65538", fontFamily: "inherit", fontSize: 14, cursor: "pointer" }}>Supprimer</button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Page Métabolisme ──────────────────────────────────────────────────────
+function MetabolismPage({ profile, setProfile, plan, onReplan, theme, accent }) {
+  const bmr = Math.round(calcBMR(profile));
+  const tdee = calcTDEE(profile);
+  const budget = calcBudget(profile);
+  const deficit = tdee - budget;
+  const set = (k, v) => setProfile(p => ({ ...p, [k]: v }));
+
+  const [raw, setRaw] = useState({
+    age: String(profile.age), height: String(profile.height),
+    weight: String(profile.weight), goalWeight: String(profile.goalWeight),
+  });
+
+  useEffect(() => {
+    setRaw({ age: String(profile.age), height: String(profile.height), weight: String(profile.weight), goalWeight: String(profile.goalWeight) });
+  }, [profile.age, profile.height, profile.weight, profile.goalWeight]);
+
+  const CLAMP = { age: [10, 120], height: [100, 250], weight: [30, 300], goalWeight: [30, 300] };
+  const onBlur = (k, step) => {
+    const parsed = step ? parseFloat(String(raw[k]).replace(",", ".")) : parseInt(raw[k], 10);
+    const [mn, mx] = CLAMP[k];
+    const clamped = isNaN(parsed) ? profile[k] : Math.min(mx, Math.max(mn, parsed));
+    set(k, clamped);
+    setRaw(r => ({ ...r, [k]: String(clamped) }));
+  };
+
+  const lbl = { fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase", color: theme.muted, marginBottom: 6, display: "block" };
+  const inp = { width: "100%", height: 44, borderRadius: 12, border: `1px solid ${theme.hairline}`, background: theme.chipBg, color: theme.text, fontSize: 15, padding: "0 14px", fontFamily: "inherit", outline: "none", boxSizing: "border-box" };
+
+  const startD = parseDay(plan.startDate);
+  const goalD = parseDay(plan.goalDate);
+  const fmtLong = d => `${d.getDate()} ${MONTH_FR[d.getMonth()]} ${d.getFullYear()}`;
+
+  return (
+    <div style={{ padding: "28px 28px 120px", overflowY: "auto" }}>
+      <div style={{ fontSize: 11, letterSpacing: "0.16em", textTransform: "uppercase", color: theme.muted, marginBottom: 8 }}>Mon profil</div>
+      <div style={{ fontFamily: '"Instrument Serif", Georgia, serif', fontStyle: "italic", fontSize: 32, lineHeight: 1.1, marginBottom: 28 }}>Métabolisme</div>
+
+      <div style={{ marginBottom: 18 }}>
+        <span style={lbl}>Sexe</span>
+        <div style={{ display: "flex", gap: 8 }}>
+          {["homme", "femme"].map(s => (
+            <button key={s} onClick={() => set("sex", s)}
+              style={{ flex: 1, height: 42, borderRadius: 12, border: `1px solid ${profile.sex === s ? accent : theme.hairline}`, background: profile.sex === s ? accent : "transparent", color: profile.sex === s ? "#fff" : theme.text, fontSize: 14, fontFamily: "inherit", cursor: "pointer", fontWeight: 500, transition: "all 200ms" }}>
+              {s === "homme" ? "Homme" : "Femme"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 18 }}>
+        <div><span style={lbl}>Âge</span><input type="number" inputMode="numeric" value={raw.age} onChange={e => setRaw(r => ({ ...r, age: e.target.value }))} onBlur={() => onBlur("age")} style={inp} /></div>
+        <div><span style={lbl}>Taille (cm)</span><input type="number" inputMode="numeric" value={raw.height} onChange={e => setRaw(r => ({ ...r, height: e.target.value }))} onBlur={() => onBlur("height")} style={inp} /></div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 18 }}>
+        <div><span style={lbl}>Poids de départ (kg)</span><input type="number" step="0.1" inputMode="decimal" value={raw.weight} onChange={e => setRaw(r => ({ ...r, weight: e.target.value }))} onBlur={() => onBlur("weight", true)} style={inp} /></div>
+        <div><span style={lbl}>Objectif (kg)</span><input type="number" step="0.1" inputMode="decimal" value={raw.goalWeight} onChange={e => setRaw(r => ({ ...r, goalWeight: e.target.value }))} onBlur={() => onBlur("goalWeight", true)} style={inp} /></div>
+      </div>
+
+      <div style={{ marginBottom: 24 }}>
+        <span style={lbl}>Niveau d'activité</span>
+        <div style={{ display: "grid", gap: 8 }}>
+          {ACTIVITY_LEVELS.map(a => (
+            <button key={a.value} onClick={() => set("activity", a.value)}
+              style={{ height: 42, borderRadius: 12, border: `1px solid ${profile.activity === a.value ? accent : theme.hairline}`, background: profile.activity === a.value ? accent : "transparent", color: profile.activity === a.value ? "#fff" : theme.text, fontSize: 13, fontFamily: "inherit", cursor: "pointer", fontWeight: 500, padding: "0 16px", textAlign: "left", transition: "all 200ms" }}>
+              {a.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Plan ancré */}
+      <div style={{ border: `1px solid ${theme.hairline}`, borderRadius: 16, padding: "16px 16px 14px", marginBottom: 20 }}>
+        <div style={{ fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: theme.fainter, marginBottom: 10 }}>Plan</div>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: theme.muted, marginBottom: 6 }}>
+          <span>Début</span><span style={{ color: theme.text }}>{fmtLong(startD)} · {plan.startWeight.toFixed(1)} kg</span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: theme.muted, marginBottom: 12 }}>
+          <span>Objectif théorique</span><span style={{ color: theme.text }}>{fmtLong(goalD)} · {plan.days} j</span>
+        </div>
+        <button onClick={onReplan}
+          style={{ width: "100%", height: 40, borderRadius: 12, border: `1px solid ${theme.hairline}`, background: "transparent", color: theme.muted, fontFamily: "inherit", fontSize: 13, cursor: "pointer" }}>
+          Replanifier à partir d'aujourd'hui
+        </button>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 14 }}>
+        {[
+          { label: "MB", value: bmr, sub: "métabolisme basal" },
+          { label: "TDEE", value: tdee, sub: "dépense totale" },
+          { label: "Budget", value: budget, sub: `déficit ${deficit} kcal` },
+        ].map(c => (
+          <div key={c.label} style={{ background: theme.chipBg, borderRadius: 14, padding: "12px 10px", textAlign: "center" }}>
+            <div style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: theme.fainter, marginBottom: 4 }}>{c.label}</div>
+            <div style={{ fontFamily: '"Instrument Serif", Georgia, serif', fontStyle: "italic", fontSize: 22, color: theme.text }}>{c.value.toLocaleString("fr-FR")}</div>
+            <div style={{ fontSize: 9.5, color: theme.fainter, marginTop: 3 }}>{c.sub}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ fontSize: 11, color: theme.fainter, lineHeight: 1.5 }}>
+        Mifflin-St Jeor · −{deficit} kcal/j ≈ {(deficit * 7 / KCAL_PER_KG).toFixed(2)} kg/sem
+      </div>
+    </div>
+  );
+}
+
+// ── Tab bar ───────────────────────────────────────────────────────────────
+function TabBar({ page, setPage, theme, accent }) {
+  const tabs = [
+    { id: "track", label: "Suivi", d: "M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z" },
+    { id: "metabolism", label: "Profil", d: "M12 11c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zm0 2c-3.33 0-10 1.67-10 5v2h20v-2c0-3.33-6.67-5-10-5z" },
+  ];
+  return (
+    <div style={{ display: "flex", borderTop: `1px solid ${theme.hairline}`, background: theme.bg, flexShrink: 0, paddingBottom: "env(safe-area-inset-bottom)" }}>
+      {tabs.map(t => (
+        <button key={t.id} onClick={() => setPage(t.id)}
+          style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "10px 0 8px", border: "none", background: "transparent", color: page === t.id ? accent : theme.fainter, cursor: "pointer", fontFamily: "inherit", fontSize: 10, letterSpacing: "0.08em", transition: "color 200ms" }}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d={t.d} /></svg>
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ── App ───────────────────────────────────────────────────────────────────
+function App() {
+  const isMobile = useIsMobile();
+
+  const [accent, setAccent]   = useState(() => storage.get("wl-accent", "#1F8A5B"));
+  const [dark, setDark]       = useState(() => storage.get("wl-dark", false));
+  const [curveStyle, setCurveStyle] = useState(() => storage.get("wl-curve-style", "line"));
+  const [zoom, setZoom] = useState(() => storage.get("wl-zoom", "30"));
+  const [page, setPage]       = useState("track");
+  const [profile, setProfile] = useState(() => storage.get("wl-profile", DEFAULT_PROFILE));
+  const [selectedDay, setSelectedDay] = useState(TODAY);
+  const [mealsByDay, setMealsByDay]   = useState(() => storage.get("wl-meals", {}));   // plus de données de démo
+  const [weighIns, setWeighIns]       = useState(() => storage.get("wl-weigh-ins", {})); // pesées OPTIONNELLES
+  const [plan, setPlan]       = useState(() => storage.get("wl-plan", null) || buildPlan(storage.get("wl-profile", DEFAULT_PROFILE), TODAY));
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [editingMeal, setEditingMeal] = useState(null);
+  const [pulseKey, setPulseKey]   = useState(0);
+
+  const theme = getTheme(dark);
+
+  useEffect(() => { storage.set("wl-accent", accent); }, [accent]);
+  useEffect(() => { storage.set("wl-dark", dark); }, [dark]);
+  useEffect(() => { storage.set("wl-curve-style", curveStyle); }, [curveStyle]);
+  useEffect(() => { storage.set("wl-zoom", zoom); }, [zoom]);
+  useEffect(() => { storage.set("wl-profile", profile); }, [profile]);
+  useEffect(() => { storage.set("wl-meals", mealsByDay); }, [mealsByDay]);
+  useEffect(() => { storage.set("wl-weigh-ins", weighIns); }, [weighIns]);
+  useEffect(() => { storage.set("wl-plan", plan); }, [plan]);
+
+  // Le plan reste FIXE au quotidien ; il n'est reconstruit que si le profil change.
+  useEffect(() => {
+    setPlan(prev => {
+      const next = buildPlan(profile, prev.startDate);
+      const same = next.days === prev.days
+        && next.startWeight === prev.startWeight
+        && next.goalWeight === prev.goalWeight;
+      return same ? prev : next;
+    });
+  }, [profile]);
+
+  const replan = () => setPlan(buildPlan(profile, TODAY));
+
+  const meals    = mealsByDay[selectedDay] || [];
+  const isToday  = selectedDay === TODAY;
+  const budget   = calcBudget(profile);
+  const tdee     = calcTDEE(profile);
+  const eaten    = meals.reduce((s, m) => s + (m.kcal || 0), 0);
+  const remaining = budget - eaten;
+
+  // Calories par jour — passé ET futur (plus de filtre d <= TODAY)
+  const kcalByDay = useMemo(() => {
+    const out = {};
+    for (const [d, ms] of Object.entries(mealsByDay)) {
+      if (ms && ms.length > 0) out[d] = ms.reduce((s, m) => s + (m.kcal || 0), 0);
+    }
+    return out;
+  }, [mealsByDay]);
+
+  const sim = useMemo(() => simulate(plan, kcalByDay, tdee, budget), [plan, kcalByDay, tdee, budget]);
+
+  const todayDay    = Math.max(0, dayOffset(TODAY, plan.startDate));
+  const selectedDayOffset = dayOffset(selectedDay, plan.startDate);
+  const weighInPts  = useMemo(
+    () => Object.entries(weighIns)
+      .map(([d, w]) => ({ day: dayOffset(d, plan.startDate), w }))
+      .filter(p => p.day >= 0)
+      .sort((a, b) => a.day - b.day),
+    [weighIns, plan.startDate]
+  );
+
+  // Poids projeté pour le jour sélectionné (piloté par les calories)
+  const projectedWeight = sim.pts[Math.max(0, Math.min(selectedDayOffset, sim.pts.length - 1))]?.w ?? plan.startWeight;
+  const daysToGoal = sim.reachedDay;
+
+  // Deux rythmes distincts : moyenne sur l'horizon restant, et pente des 7 prochains jours
+  const wToday = sim.pts[Math.min(todayDay, sim.pts.length - 1)]?.w ?? plan.startWeight;
+  const remainingDays = daysToGoal != null ? Math.max(1, daysToGoal - todayDay) : null;
+  const weeklyAvg = remainingDays ? -((wToday - plan.goalWeight) / (remainingDays / 7)) : 0;
+  const weeklyNext7 = sim.pts[Math.min(todayDay + 7, sim.pts.length - 1)].w - wToday;
+
+  // Dates de fin : théorique (fixe) vs projetée (pilotée par les calories)
+  const projGoalDate = daysToGoal != null ? fmt(addDays(parseDay(plan.startDate), daysToGoal)) : null;
+  const deltaDays = daysToGoal != null ? daysToGoal - plan.days : null;
+
+  const tweenedEaten = useTween(eaten);
+  const tweenedDays  = useTween(daysToGoal ?? MAX_SIM_DAYS);
+  const tweenedAvg   = useTween(weeklyAvg);
+  const tweenedNext7 = useTween(weeklyNext7);
+
+  // Saisie libre de la pesée (validation à la sortie du champ)
+  const [rawWeighIn, setRawWeighIn] = useState("");
+  useEffect(() => {
+    setRawWeighIn(weighIns[selectedDay] != null ? String(weighIns[selectedDay]) : "");
+  }, [selectedDay, weighIns]);
+
+  const commitWeighIn = () => {
+    const s = rawWeighIn.trim().replace(",", ".");
+    if (s === "") {
+      setWeighIns(prev => { const n = { ...prev }; delete n[selectedDay]; return n; });
+      return;
+    }
+    const w = parseFloat(s);
+    if (isNaN(w) || w <= 0) {
+      setRawWeighIn(weighIns[selectedDay] != null ? String(weighIns[selectedDay]) : "");
+      return;
+    }
+    const clamped = Math.min(300, Math.max(30, w));
+    setWeighIns(prev => ({ ...prev, [selectedDay]: clamped }));
+    setRawWeighIn(String(clamped));
+  };
+
+  const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  const [lastAddedId, setLastAddedId] = useState(null);
+
+  const onSaveMeal = (payload) => {
+    if (editingMeal) {
+      setMealsByDay(prev => ({
+        ...prev,
+        [selectedDay]: (prev[selectedDay] || []).map(m => m.id === editingMeal.id ? { ...m, ...payload } : m),
+      }));
+    } else {
+      const time = new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+      const id = newId();
+      setMealsByDay(prev => ({ ...prev, [selectedDay]: [...(prev[selectedDay] || []), { id, time, ...payload }] }));
+      setLastAddedId(id);
+    }
+    setSheetOpen(false); setEditingMeal(null); setPulseKey(k => k + 1);
+  };
+  const onDeleteMeal = id => {
+    setMealsByDay(prev => ({ ...prev, [selectedDay]: (prev[selectedDay] || []).filter(x => x.id !== id) }));
+    setPulseKey(k => k + 1);
+  };
+  const closeSheet = () => { setSheetOpen(false); setEditingMeal(null); };
+  const openEdit = (m) => { setEditingMeal(m); setSheetOpen(true); };
+
+  // Libellé de quantité affiché sur la ligne de repas
+  const qtyLabel = m => {
+    if (m.unit === "portion" && m.qty != null) {
+      return `×${m.qty}${m.servingSize ? " · " + Math.round(m.qty * m.servingSize) + " g" : ""}`;
+    }
+    if (m.unit === "g" && m.qty != null) return `${m.qty} g`;
+    return null;
+  };
+
+  const selDate  = parseDay(selectedDay);
+  const dayLabel = isToday ? "Aujourd'hui" : selDate.getDate() + " " + MONTH_FR[selDate.getMonth()];
+  const isFutureDay = selectedDay > TODAY;
+
+  const shell = isMobile
+    ? { width: "100%", height: "100%", borderRadius: 0, overflow: "hidden", position: "relative", background: theme.bg, color: theme.text, letterSpacing: "-0.01em", display: "flex", flexDirection: "column" }
+    : { width: "100%", maxWidth: 440, height: "92vh", maxHeight: 860, borderRadius: 32, overflow: "hidden", position: "relative", background: theme.bg, color: theme.text, boxShadow: "0 30px 60px rgba(0,0,0,0.18),0 0 0 1px rgba(0,0,0,0.08)", letterSpacing: "-0.01em", display: "flex", flexDirection: "column" };
+
+  return (
+    <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: dark ? "#1a1a18" : "#EFEDE6", fontFamily: '"Inter Tight", ui-sans-serif, system-ui, sans-serif', padding: isMobile ? 0 : 20, boxSizing: "border-box" }}>
+      <style>{`
+        @keyframes mealIn { from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)} }
+        @keyframes sheetIn { from{transform:translateY(100%)}to{transform:translateY(0)} }
+        @keyframes fadeIn { from{opacity:0}to{opacity:1} }
+        @keyframes dotPulse { 0%,80%,100%{transform:scale(0.5);opacity:0.3} 40%{transform:scale(1);opacity:1} }
+        .meal-del:hover { background:rgba(180,40,40,0.10)!important; color:#B62828!important; }
+      `}</style>
+
+      <div style={shell}>
+        <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}>
+          {page === "track" ? (
+            <>
+              {/* Header */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "24px 28px 0" }}>
+                <div>
+                  <div style={{ fontSize: 11, letterSpacing: "0.16em", textTransform: "uppercase", color: theme.muted }}>{DAY_FULL_FR[selDate.getDay()]}</div>
+                  <div style={{ fontFamily: '"Instrument Serif", Georgia, serif', fontStyle: "italic", fontSize: 28, lineHeight: 1.1, marginTop: 2 }}>{dayLabel}</div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 11, color: theme.fainter }}>{budget.toLocaleString("fr-FR")} kcal/j</div>
+                  <div style={{ display: "flex", gap: 5, marginTop: 6, justifyContent: "flex-end" }}>
+                    {ACCENTS.map(c => <button key={c} onClick={() => setAccent(c)} style={{ width: 16, height: 16, borderRadius: "50%", background: c, border: accent === c ? `2px solid ${theme.text}` : `1px solid ${theme.hairline}`, cursor: "pointer", padding: 0 }} />)}
+                    <button onClick={() => setDark(!dark)} style={{ width: 16, height: 16, borderRadius: "50%", background: theme.chipBg, border: `1px solid ${theme.hairline}`, cursor: "pointer", padding: 0, fontSize: 9, color: theme.text, display: "flex", alignItems: "center", justifyContent: "center" }}>{dark ? "☾" : "☀"}</button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Poids projeté */}
+              <div style={{ padding: "16px 28px 0", display: "flex", alignItems: "baseline", gap: 10 }}>
+                <div style={{ fontFamily: '"Instrument Serif", Georgia, serif', fontSize: 72, lineHeight: 0.95, fontWeight: 400, letterSpacing: "-0.03em", fontStyle: "italic" }}>{projectedWeight.toFixed(1)}</div>
+                <div style={{ fontSize: 13, color: theme.muted }}>kg {isFutureDay ? "prévu" : "projeté"}</div>
+              </div>
+              <div style={{ padding: "6px 28px 0", display: "flex", gap: 18, fontSize: 12, color: theme.fainter }}>
+                <span>
+                  <span style={{ color: tweenedAvg <= 0 ? accent : "#B65538", fontWeight: 500 }}>{tweenedAvg.toFixed(2)}</span>
+                  <span style={{ marginLeft: 4 }}>kg/sem moyen</span>
+                </span>
+                <span>
+                  <span style={{ color: tweenedNext7 <= 0 ? accent : "#B65538", fontWeight: 500 }}>{tweenedNext7.toFixed(2)}</span>
+                  <span style={{ marginLeft: 4 }}>7 prochains j</span>
+                </span>
+              </div>
+              <div style={{ padding: "4px 28px 0", fontSize: 12, color: theme.fainter }}>
+                obj. {plan.goalWeight.toFixed(1)} kg
+                <span style={{ margin: "0 6px", color: theme.hairline }}>·</span>
+                {daysToGoal != null ? `~${Math.round(tweenedDays)} j` : `> ${MAX_SIM_DAYS} j`}
+              </div>
+
+              {/* Pesée optionnelle */}
+              <div style={{ padding: "14px 28px 0" }}>
+                <div style={{ fontSize: 11, letterSpacing: "0.16em", textTransform: "uppercase", color: theme.muted, marginBottom: 8 }}>
+                  Pesée du jour <span style={{ textTransform: "none", letterSpacing: 0, color: theme.fainter }}>· facultatif</span>
+                </div>
+                <input
+                  type="text" inputMode="decimal" placeholder="—"
+                  value={rawWeighIn}
+                  onChange={e => setRawWeighIn(e.target.value)}
+                  onBlur={commitWeighIn}
+                  onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+                  style={{ width: "100%", height: 48, borderRadius: 14, border: `1px solid ${theme.hairline}`, background: theme.chipBg, color: theme.text, fontSize: 20, padding: "0 16px", fontFamily: "inherit", outline: "none", boxSizing: "border-box" }}
+                />
+                <div style={{ fontSize: 11, color: theme.fainter, marginTop: 6 }}>
+                  Simple point de contrôle — n'influence pas la courbe.
+                </div>
+              </div>
+
+              {/* Courbe */}
+              <div style={{ padding: "14px 18px 0" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "0 10px 4px", fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: theme.fainter }}>
+                  <span>Trajectoire</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <button onClick={() => setZoom(z => z === "30" ? "all" : "30")}
+                      style={{ background: "transparent", border: `1px solid ${theme.hairline}`, color: theme.muted, fontFamily: "inherit", fontSize: 9, cursor: "pointer", letterSpacing: "0.1em", textTransform: "uppercase", borderRadius: 999, padding: "3px 9px" }}>
+                      {zoom === "30" ? "Tout voir" : "30 jours"}
+                    </button>
+                    <select value={curveStyle} onChange={e => setCurveStyle(e.target.value)}
+                      style={{ background: "transparent", border: "none", color: theme.fainter, fontFamily: "inherit", fontSize: 10, cursor: "pointer", outline: "none", letterSpacing: "0.1em", textTransform: "uppercase" }}>
+                      <option value="line">Trait</option>
+                      <option value="area">Aire</option>
+                      <option value="dotted">Pointillé</option>
+                    </select>
+                  </div>
+                </div>
+                <ProjectionCurve
+                  plan={plan} sim={sim} weighIns={weighInPts} todayDay={todayDay}
+                  curveStyle={curveStyle} zoom={zoom}
+                  accent={accent} text={theme.text} muted={theme.muted} hairline={theme.hairline}
+                  pulseKey={pulseKey}
+                />
+                <div style={{ display: "flex", gap: 14, padding: "6px 10px 0", fontSize: 10, color: theme.fainter, flexWrap: "wrap" }}>
+                  <span><span style={{ color: accent }}>┄</span> théorique</span>
+                  <span><span style={{ color: theme.text }}>—</span> projection calories</span>
+                  <span><span style={{ color: accent }}>○</span> pesées</span>
+                </div>
+                <div style={{ margin: "10px 10px 0", padding: "10px 12px", borderRadius: 12, background: theme.chipBg, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                  <div style={{ fontSize: 11, color: theme.muted, lineHeight: 1.5 }}>
+                    <div>Théorique · <span style={{ color: theme.text }}>{fmtShortDate(plan.goalDate)}</span></div>
+                    <div>Projeté · <span style={{ color: theme.text }}>{projGoalDate ? fmtShortDate(projGoalDate) : "au-delà de " + MAX_SIM_DAYS + " j"}</span></div>
+                  </div>
+                  {deltaDays != null && (
+                    <div style={{ textAlign: "right", flexShrink: 0 }}>
+                      <div style={{ fontFamily: '"Instrument Serif", Georgia, serif', fontStyle: "italic", fontSize: 22, color: deltaDays > 0 ? "#B65538" : accent, lineHeight: 1 }}>
+                        {deltaDays > 0 ? "+" : ""}{deltaDays} j
+                      </div>
+                      <div style={{ fontSize: 9.5, color: theme.fainter, marginTop: 3 }}>
+                        {deltaDays > 0 ? "de retard" : deltaDays < 0 ? "d'avance" : "dans les temps"}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Calendrier */}
+              <div style={{ padding: "16px 0 4px" }}>
+                <DayStrip selectedDay={selectedDay} setSelectedDay={setSelectedDay} mealsByDay={mealsByDay} theme={theme} accent={accent} />
+              </div>
+
+              {/* Barre calories */}
+              <div style={{ padding: "14px 28px 0" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
+                  <div style={{ fontSize: 11, letterSpacing: "0.16em", textTransform: "uppercase", color: theme.muted }}>Calories</div>
+                  <div style={{ fontSize: 13, color: theme.muted }}>
+                    <span style={{ fontFamily: '"Instrument Serif", Georgia, serif', fontStyle: "italic", fontSize: 16, color: theme.text }}>{Math.round(tweenedEaten).toLocaleString("fr-FR")}</span>
+                    <span style={{ margin: "0 4px", color: theme.fainter }}>/</span>
+                    <span>{budget.toLocaleString("fr-FR")} kcal</span>
+                  </div>
+                </div>
+                <div style={{ position: "relative", height: 2, background: theme.hairline, borderRadius: 1 }}>
+                  <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${Math.min(100, (eaten/budget)*100)}%`, background: accent, transition: "width 700ms cubic-bezier(.4,0,.2,1)", borderRadius: 1 }} />
+                </div>
+                <div style={{ marginTop: 6, fontSize: 12, color: theme.muted }}>
+                  {remaining >= 0
+                    ? <>il reste <span style={{ color: theme.text }}>{remaining.toLocaleString("fr-FR")}</span> kcal</>
+                    : <span style={{ color: "#B65538" }}>{Math.abs(remaining).toLocaleString("fr-FR")} kcal au-dessus</span>}
+                </div>
+              </div>
+
+              {/* Liste repas */}
+              <div style={{ padding: "20px 28px 140px" }}>
+                <div style={{ fontSize: 11, letterSpacing: "0.16em", textTransform: "uppercase", color: theme.muted, marginBottom: 12 }}>
+                  Repas {isFutureDay && <span style={{ textTransform: "none", letterSpacing: 0, color: theme.fainter }}>· prévisionnel</span>}
+                  {meals.length > 0 && <span style={{ textTransform: "none", letterSpacing: 0, color: theme.fainter, fontSize: 10, marginLeft: 8 }}>touchez pour modifier</span>}
+                </div>
+                {meals.length === 0 ? (
+                  <div style={{ fontSize: 14, color: theme.fainter, fontStyle: "italic", padding: "8px 0" }}>
+                    Aucun repas enregistré{isToday ? " aujourd'hui" : " ce jour"}.
+                  </div>
+                ) : meals.map((m, i) => (
+                  <div key={m.id} style={{ display: "grid", gridTemplateColumns: "44px 1fr auto 28px", alignItems: "baseline", gap: 12, padding: "12px 0", borderTop: i === 0 ? "none" : `1px solid ${theme.hairline}`, animation: m.id === lastAddedId ? "mealIn 600ms ease" : "none" }}>
+                    <div style={{ fontSize: 11, color: theme.fainter, fontVariantNumeric: "tabular-nums" }}>{m.time}</div>
+                    <button onClick={() => openEdit(m)}
+                      style={{ background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", fontFamily: "inherit", color: "inherit" }}>
+                      <div style={{ fontSize: 14, color: theme.text, lineHeight: 1.3 }}>{m.name}</div>
+                      {qtyLabel(m) && <div style={{ fontSize: 11, color: theme.fainter, marginTop: 2 }}>{qtyLabel(m)}</div>}
+                    </button>
+                    <div style={{ fontSize: 13, color: theme.muted, fontVariantNumeric: "tabular-nums" }}>{m.kcal != null ? m.kcal : "—"} <span style={{ color: theme.fainter, fontSize: 11 }}>kcal</span></div>
+                    <button onClick={() => onDeleteMeal(m.id)} className="meal-del"
+                      style={{ width: 24, height: 24, borderRadius: "50%", border: "none", background: "transparent", color: theme.fainter, cursor: "pointer", padding: 0, fontSize: 16, lineHeight: 1, alignSelf: "center", transition: "all 150ms" }}>×</button>
+                  </div>
+                ))}
+              </div>
+
+              {/* CTA */}
+              <div style={{ position: "sticky", bottom: 0, padding: "12px 20px 16px", background: `linear-gradient(to top, ${theme.bg} 65%, transparent)`, marginTop: -60 }}>
+                <button onClick={() => { setEditingMeal(null); setSheetOpen(true); }}
+                  style={{ width: "100%", height: 54, borderRadius: 27, border: "none", background: theme.text, color: theme.bg, fontSize: 15, fontFamily: "inherit", fontWeight: 500, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: dark ? "0 8px 24px rgba(0,0,0,0.6)" : "0 8px 24px rgba(22,21,20,0.18)" }}>
+                  <span style={{ fontSize: 20, fontWeight: 300, marginTop: -2 }}>+</span>
+                  Ajouter un repas · {dayLabel}
+                </button>
+              </div>
+
+              <AddMealSheet
+                open={sheetOpen}
+                onClose={closeSheet}
+                onSave={onSaveMeal}
+                onDelete={() => { if (editingMeal) onDeleteMeal(editingMeal.id); closeSheet(); }}
+                editing={editingMeal}
+                theme={theme} accent={accent} dayLabel={dayLabel} />
+            </>
+          ) : (
+            <MetabolismPage profile={profile} setProfile={setProfile} plan={plan} onReplan={replan} theme={theme} accent={accent} />
+          )}
+        </div>
+
+        <TabBar page={page} setPage={setPage} theme={theme} accent={accent} />
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", function() {
+    navigator.serviceWorker.register("./sw.js").catch(function(){});
+  });
+}
+</script>
+</body>
+</html>
