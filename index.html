@@ -180,8 +180,16 @@ function parseServing(p) {
   return null;
 }
 
+// Fusionne base locale (aliments simples) + résultats API (produits emballés), sans doublons de nom
+function mergeResults(local, apiItems) {
+  const apiNames = new Set(apiItems.map(p => normalise(p.name)));
+  const localFiltered = local.filter(l => !apiNames.has(normalise(l.name)));
+  return [...localFiltered, ...apiItems];
+}
+
 // Retourne { items, offline } — plus jamais de repli silencieux invisible
 async function searchFood(query) {
+  const local = searchLocal(query);
   try {
     const url = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(query)}&search_simple=1&json=1&page_size=25`;
     const res = await fetch(url);
@@ -204,11 +212,10 @@ async function searchFood(query) {
       })
       .filter(p => p.kcal != null && p.kcal > 0);
 
-    // L'API répond mais ne trouve rien d'exploitable → on tente la base locale
-    if (items.length === 0) return { items: searchLocal(query), offline: false };
-    return { items: rankResults(items, query).slice(0, 12), offline: false };
+    // Aliments simples (base locale) + produits emballés (API), triés par pertinence
+    return { items: rankResults(mergeResults(local, items), query).slice(0, 12), offline: false };
   } catch {
-    return { items: searchLocal(query), offline: true };
+    return { items: local, offline: true };
   }
 }
 
