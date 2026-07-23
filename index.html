@@ -726,8 +726,8 @@ function AddMealSheet({ open, onClose, onSave, onDelete, theme, accent, dayLabel
         </div>
 
         {/* Recherche : champ + bouton */}
-        <div style={{ display: "flex", gap: 8, marginBottom: 10, flexShrink: 0 }}>
-          <div style={{ position: "relative", flex: 1 }}>
+        <div style={{ marginBottom: 10, flexShrink: 0 }}>
+          <div style={{ position: "relative", marginBottom: 8 }}>
             <input autoFocus={!isEdit} value={query}
               onChange={e => setQuery(e.target.value)}
               onKeyDown={e => { if (e.key === "Enter") runSearch(); }}
@@ -740,7 +740,7 @@ function AddMealSheet({ open, onClose, onSave, onDelete, theme, accent, dayLabel
             )}
           </div>
           <button onClick={runSearch} disabled={!query.trim() || loading}
-            style={{ height: 46, padding: "0 14px", borderRadius: 12, border: "none", background: query.trim() && !loading ? accent : theme.chipBg, color: query.trim() && !loading ? "#fff" : theme.fainter, fontFamily: "inherit", fontSize: 14, fontWeight: 500, cursor: query.trim() && !loading ? "pointer" : "default", flexShrink: 0, minWidth: 92, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            style={{ height: 46, width: "100%", borderRadius: 12, border: "none", background: query.trim() && !loading ? accent : theme.chipBg, color: query.trim() && !loading ? "#fff" : theme.fainter, fontFamily: "inherit", fontSize: 14, fontWeight: 500, cursor: query.trim() && !loading ? "pointer" : "default", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
             {loading ? <Spinner accent="#fff" /> : "Chercher"}
           </button>
         </div>
