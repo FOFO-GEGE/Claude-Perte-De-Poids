@@ -28,6 +28,7 @@ body{font-family:"Inter Tight",ui-sans-serif,system-ui,sans-serif;-webkit-font-s
 <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js"></script>
+<script defer src="https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js"></script>
 <script src="./food-db.js"></script>
 <script type="text/babel">
 const { useState, useEffect, useRef, useMemo } = React;
@@ -209,6 +210,125 @@ async function searchFood(query) {
   } catch {
     return { items: searchLocal(query), offline: true };
   }
+}
+
+// ── Code-barres ───────────────────────────────────────────────────────────
+function mapOffProduct(p) {
+  const n = p.nutriments || {};
+  const kcal = n["energy-kcal_100g"]
+    ?? n["energy-kcal"]
+    ?? (n["energy_100g"] ? Math.round(n["energy_100g"] / 4.184) : null)
+    ?? (n["energy"] ? Math.round(n["energy"] / 4.184) : null);
+  if (kcal == null || kcal <= 0 || !p.product_name) return null;
+  return {
+    name: p.product_name,
+    brand: p.brands ? p.brands.split(",")[0].trim() : "",
+    kcal,
+    serving: parseServing(p),
+  };
+}
+
+// Endpoint produit d'Open Food Facts — même hôte que la recherche, rien à changer côté sw.js
+async function fetchByBarcode(code) {
+  try {
+    const url = `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json`
+      + `?fields=product_name,brands,nutriments,serving_size,serving_quantity`;
+    const res = await fetch(url);
+    if (!res.ok) return { item: null, offline: false };
+    const data = await res.json();
+    if (data.status !== 1 || !data.product) return { item: null, offline: false };
+    return { item: mapOffProduct(data.product), offline: false };
+  } catch {
+    return { item: null, offline: true };
+  }
+}
+
+function BarcodeScanner({ onDetect, onClose, theme, accent }) {
+  const videoRef = useRef(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let stream = null, reader = null, raf = null, stopped = false;
+
+    const hit = value => { if (!stopped && value) { stopped = true; onDetect(String(value).trim()); } };
+
+    (async () => {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setError("Caméra indisponible sur ce navigateur."); return;
+      }
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } } });
+        if (stopped) { stream.getTracks().forEach(t => t.stop()); return; }
+        videoRef.current.srcObject = stream;
+        videoRef.current.setAttribute("playsinline", "true");
+        await videoRef.current.play();
+      } catch {
+        setError("Accès à la caméra refusé. Autorisez-le dans les réglages du navigateur.");
+        return;
+      }
+
+      // Voie native (Chrome / Android) — la plus rapide
+      if ("BarcodeDetector" in window) {
+        let detector;
+        try {
+          const supported = await window.BarcodeDetector.getSupportedFormats();
+          const wanted = ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "qr_code"].filter(f => supported.includes(f));
+          detector = new window.BarcodeDetector(wanted.length ? { formats: wanted } : undefined);
+        } catch { detector = null; }
+
+        if (detector) {
+          const tick = async () => {
+            if (stopped) return;
+            try {
+              const codes = await detector.detect(videoRef.current);
+              if (codes && codes.length) { hit(codes[0].rawValue); return; }
+            } catch {}
+            raf = requestAnimationFrame(tick);
+          };
+          raf = requestAnimationFrame(tick);
+          return;
+        }
+      }
+
+      // Repli ZXing (Safari / iOS)
+      if (window.ZXing && window.ZXing.BrowserMultiFormatReader) {
+        reader = new window.ZXing.BrowserMultiFormatReader();
+        reader.decodeFromVideoElement(videoRef.current, result => { if (result) hit(result.getText()); });
+        return;
+      }
+
+      setError("Lecture de code-barres non supportée sur ce navigateur.");
+    })();
+
+    return () => {
+      stopped = true;
+      if (raf) cancelAnimationFrame(raf);
+      if (reader && reader.reset) { try { reader.reset(); } catch {} }
+      if (stream) stream.getTracks().forEach(t => t.stop());
+    };
+  }, []);
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 70, background: "#000", display: "flex", flexDirection: "column" }}>
+      <video ref={videoRef} muted playsInline
+        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+
+      {/* Viseur */}
+      <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+        <div style={{ width: "76%", maxWidth: 320, aspectRatio: "1.6", border: "2px solid rgba(255,255,255,0.9)", borderRadius: 16, boxShadow: "0 0 0 9999px rgba(0,0,0,0.45)" }} />
+      </div>
+
+      <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, padding: "20px 24px 34px", display: "flex", flexDirection: "column", gap: 14, alignItems: "center" }}>
+        <div style={{ color: "#fff", fontSize: 13, textAlign: "center", textShadow: "0 1px 4px rgba(0,0,0,0.6)" }}>
+          {error || "Cadrez le code-barres du produit"}
+        </div>
+        <button onClick={onClose}
+          style={{ height: 46, padding: "0 28px", borderRadius: 23, border: "none", background: "#fff", color: "#111", fontFamily: "inherit", fontSize: 14, fontWeight: 500, cursor: "pointer" }}>
+          Annuler
+        </button>
+      </div>
+    </div>
+  );
 }
 
 // ── Plan : dates ancrées (début figé + objectif théorique figé) ────────────
@@ -493,12 +613,15 @@ function AddMealSheet({ open, onClose, onSave, onDelete, theme, accent, dayLabel
   const [unit, setUnit] = useState("g");
   const [rawQty, setRawQty] = useState("100");
   const [manualKcal, setManualKcal] = useState("");
+  const [scanning, setScanning] = useState(false);
+  const [notice, setNotice] = useState(null);
 
   const isEdit = !!editing;
 
   useEffect(() => {
     if (!open) return;
     setQuery(""); setResults([]); setLoading(false); setHasSearched(false); setOffline(false);
+    setScanning(false); setNotice(null);
     if (editing) {
       setEditName(editing.name);
       if (editing.kcalPer100 != null) {
@@ -533,6 +656,23 @@ function AddMealSheet({ open, onClose, onSave, onDelete, theme, accent, dayLabel
     setManualKcal("");
     if (item.serving) { setUnit("portion"); setRawQty("1"); }
     else { setUnit("g"); setRawQty("100"); }
+  };
+
+  const handleScanned = async (code) => {
+    setScanning(false);
+    setLoading(true); setOffline(false); setNotice(null);
+    const { item, offline: off } = await fetchByBarcode(code);
+    setLoading(false);
+    setHasSearched(true);
+    if (off) { setOffline(true); setResults([]); setNotice(`Hors ligne — code ${code} non vérifiable.`); return; }
+    if (!item) {
+      setResults([]); setQuery(code);
+      setNotice(`Code ${code} introuvable dans Open Food Facts. Essayez par nom.`);
+      return;
+    }
+    setResults([item]);
+    setQuery(item.name);
+    handleSelect(item);
   };
 
   const qty = parseFloat(String(rawQty).replace(",", ".")) || 0;
@@ -585,9 +725,16 @@ function AddMealSheet({ open, onClose, onSave, onDelete, theme, accent, dayLabel
                 style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: theme.fainter, cursor: "pointer", fontSize: 20, lineHeight: 1, padding: 0 }}>×</button>
             )}
           </div>
+          <button onClick={() => { setNotice(null); setScanning(true); }} title="Scanner un code-barres"
+            style={{ height: 46, width: 46, borderRadius: 12, border: `1px solid ${theme.hairline}`, background: theme.chipBg, color: theme.text, cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+              <path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2" />
+              <path d="M7 8v8M10.5 8v8M14 8v8M17 8v8" />
+            </svg>
+          </button>
           <button onClick={runSearch} disabled={!query.trim() || loading}
-            style={{ height: 46, padding: "0 18px", borderRadius: 12, border: "none", background: query.trim() && !loading ? accent : theme.chipBg, color: query.trim() && !loading ? "#fff" : theme.fainter, fontFamily: "inherit", fontSize: 14, fontWeight: 500, cursor: query.trim() && !loading ? "pointer" : "default", flexShrink: 0, minWidth: 104, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            {loading ? <Spinner accent="#fff" /> : "Rechercher"}
+            style={{ height: 46, padding: "0 14px", borderRadius: 12, border: "none", background: query.trim() && !loading ? accent : theme.chipBg, color: query.trim() && !loading ? "#fff" : theme.fainter, fontFamily: "inherit", fontSize: 14, fontWeight: 500, cursor: query.trim() && !loading ? "pointer" : "default", flexShrink: 0, minWidth: 92, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            {loading ? <Spinner accent="#fff" /> : "Chercher"}
           </button>
         </div>
 
@@ -672,6 +819,9 @@ function AddMealSheet({ open, onClose, onSave, onDelete, theme, accent, dayLabel
               Connexion indisponible — résultats issus de la base locale.
             </div>
           )}
+          {notice && (
+            <div style={{ fontSize: 12, color: theme.muted, padding: "6px 0 10px" }}>{notice}</div>
+          )}
           {!hasSearched ? (
             !isEdit && <div style={{ fontSize: 12, color: theme.fainter, padding: "8px 0" }}>
               Tapez l'aliment en entier, puis Rechercher — accents optionnels.
@@ -707,6 +857,10 @@ function AddMealSheet({ open, onClose, onSave, onDelete, theme, accent, dayLabel
           )}
         </div>
       </div>
+
+      {scanning && (
+        <BarcodeScanner onDetect={handleScanned} onClose={() => setScanning(false)} theme={theme} accent={accent} />
+      )}
     </div>
   );
 }
