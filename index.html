@@ -617,6 +617,7 @@ function AddMealSheet({ open, onClose, onSave, onDelete, theme, accent, dayLabel
   const [scanBusy, setScanBusy] = useState(false);
   const [notice, setNotice] = useState(null);
   const photoRef = useRef(null);
+  const galleryRef = useRef(null);
 
   const isEdit = !!editing;
 
@@ -746,11 +747,15 @@ function AddMealSheet({ open, onClose, onSave, onDelete, theme, accent, dayLabel
         </div>
 
         {/* Scan par photo — sous la barre de recherche */}
+        {/* capture="environment" → appareil photo · sans capture → galerie */}
         <input ref={photoRef} type="file" accept="image/*" capture="environment"
           onChange={handlePhoto} style={{ display: "none" }} />
+        <input ref={galleryRef} type="file" accept="image/*"
+          onChange={handlePhoto} style={{ display: "none" }} />
+
         <button onClick={() => { setNotice(null); photoRef.current && photoRef.current.click(); }}
           disabled={scanBusy}
-          style={{ height: 44, width: "100%", marginBottom: 12, borderRadius: 12, border: `1px solid ${theme.hairline}`, background: theme.chipBg, color: scanBusy ? theme.fainter : theme.text, fontFamily: "inherit", fontSize: 14, fontWeight: 500, cursor: scanBusy ? "default" : "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 9 }}>
+          style={{ height: 44, width: "100%", marginBottom: 6, borderRadius: 12, border: `1px solid ${theme.hairline}`, background: theme.chipBg, color: scanBusy ? theme.fainter : theme.text, fontFamily: "inherit", fontSize: 14, fontWeight: 500, cursor: scanBusy ? "default" : "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 9 }}>
           {scanBusy ? <Spinner accent={accent} /> : (
             <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
               <path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2" />
@@ -758,6 +763,17 @@ function AddMealSheet({ open, onClose, onSave, onDelete, theme, accent, dayLabel
             </svg>
           )}
           {scanBusy ? "Analyse…" : "Photographier le code-barres"}
+        </button>
+
+        <button onClick={() => { setNotice(null); galleryRef.current && galleryRef.current.click(); }}
+          disabled={scanBusy}
+          style={{ height: 34, width: "100%", marginBottom: 12, borderRadius: 10, border: "none", background: "transparent", color: theme.fainter, fontFamily: "inherit", fontSize: 12.5, cursor: scanBusy ? "default" : "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <circle cx="8.5" cy="8.5" r="1.5" />
+            <path d="m21 15-5-5L5 21" />
+          </svg>
+          ou choisir une image de la galerie
         </button>
 
         {/* Panneau aliment : quantité + validation */}
