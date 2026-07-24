@@ -1,4 +1,4 @@
-const FOOD_DB = [
+export const FOOD_DB = [
   { name: "Pomme", brand: "", kcal100: 52, unit: "g", portionQty: 150, portionLabel: "1 fruit (150 g)", verified: true },
   { name: "Banane", brand: "", kcal100: 89, unit: "g", portionQty: 120, portionLabel: "1 fruit (120 g)", verified: true },
   { name: "Orange", brand: "", kcal100: 47, unit: "g", portionQty: 150, portionLabel: "1 fruit (150 g)", verified: true },
