@@ -145,7 +145,14 @@ function searchLocal(q) {
   if (!n) return [];
   return FOOD_DB
     .filter(f => normalise(f.name).includes(n))
-    .map(f => ({ name: f.name, brand: "", kcal: f.kcal, local: true }))
+    .map(f => ({
+      name: f.name,
+      brand: f.brand || "",
+      kcal: f.kcal100,
+      unit: f.unit,
+      serving: f.portionQty ? { grams: f.portionQty, label: f.portionLabel } : null,
+      local: true,
+    }))
     .slice(0, 10);
 }
 
@@ -636,6 +643,7 @@ function AddMealSheet({ open, onClose, onSave, onDelete, theme, accent, dayLabel
       if (editing.kcalPer100 != null) {
         setSelected({
           name: editing.name, brand: "", kcal: editing.kcalPer100,
+          unit: editing.baseUnit || "g",
           serving: editing.servingSize ? { grams: editing.servingSize, label: editing.servingLabel || editing.servingSize + " g" } : null,
         });
         setUnit(editing.unit || "g");
@@ -664,7 +672,7 @@ function AddMealSheet({ open, onClose, onSave, onDelete, theme, accent, dayLabel
     setEditName(item.brand ? item.name + " · " + item.brand : item.name);
     setManualKcal("");
     if (item.serving) { setUnit("portion"); setRawQty("1"); }
-    else { setUnit("g"); setRawQty("100"); }
+    else { setUnit(item.unit || "g"); setRawQty("100"); }
   };
 
   const handlePhoto = async (e) => {
@@ -698,6 +706,7 @@ function AddMealSheet({ open, onClose, onSave, onDelete, theme, accent, dayLabel
 
   const qty = parseFloat(String(rawQty).replace(",", ".")) || 0;
   const serving = selected && selected.serving;
+  const baseUnit = (selected && selected.unit) || "g"; // "g" ou "ml" — mesure de base de l'aliment (liquide vs solide)
   const grams = unit === "portion" && serving ? qty * serving.grams : qty;
   const computedKcal = selected ? Math.round(selected.kcal * grams / 100) : 0;
   const manualKcalNum = parseInt(manualKcal, 10);
@@ -713,13 +722,16 @@ function AddMealSheet({ open, onClose, onSave, onDelete, theme, accent, dayLabel
         qty, unit,
         servingSize: serving ? serving.grams : null,
         servingLabel: serving ? serving.label : null,
+        baseUnit,
       });
     } else {
       onSave({ name: editName.trim(), kcal: manualKcalNum, kcalPer100: null, qty: null, unit: null });
     }
   };
 
-  const QTY_PRESETS = unit === "portion" ? [0.5, 1, 1.5, 2, 3] : [30, 50, 100, 150, 200, 250];
+  const QTY_PRESETS = unit === "portion"
+    ? [0.5, 1, 1.5, 2, 3]
+    : (baseUnit === "ml" ? [100, 150, 200, 250, 330, 500] : [30, 50, 100, 150, 200, 250]);
 
   if (!open) return null;
   return (
@@ -777,9 +789,9 @@ function AddMealSheet({ open, onClose, onSave, onDelete, theme, accent, dayLabel
 
             {selected ? (
               <>
-                {/* Unité : grammes / portion */}
+                {/* Unité : mesure de base (grammes ou millilitres selon l'aliment) / portion */}
                 <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-                  {["g", "portion"].map(u => {
+                  {[baseUnit, "portion"].map(u => {
                     const disabled = u === "portion" && !serving;
                     return (
                       <button key={u} disabled={disabled}
@@ -788,7 +800,7 @@ function AddMealSheet({ open, onClose, onSave, onDelete, theme, accent, dayLabel
                           setRawQty(u === "portion" ? "1" : "100");
                         }}
                         style={{ flex: 1, height: 32, borderRadius: 999, border: `1px solid ${unit === u ? accent : theme.hairline}`, background: unit === u ? accent : "transparent", color: unit === u ? "#fff" : (disabled ? theme.fainter : theme.text), fontSize: 12, fontFamily: "inherit", cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.45 : 1 }}>
-                        {u === "g" ? "Grammes" : "Portion"}
+                        {u === "portion" ? "Portion" : (u === "ml" ? "Millilitres" : "Grammes")}
                       </button>
                     );
                   })}
@@ -809,7 +821,7 @@ function AddMealSheet({ open, onClose, onSave, onDelete, theme, accent, dayLabel
                   {QTY_PRESETS.map(v => (
                     <button key={v} onClick={() => setRawQty(String(v))}
                       style={{ background: qty === v ? accent : "transparent", color: qty === v ? "#fff" : theme.text, border: `1px solid ${qty === v ? accent : theme.hairline}`, padding: "5px 10px", borderRadius: 999, fontSize: 11, fontFamily: "inherit", cursor: "pointer" }}>
-                      {unit === "portion" ? "×" + v : v + "g"}
+                      {unit === "portion" ? "×" + v : v + (baseUnit === "ml" ? " ml" : "g")}
                     </button>
                   ))}
                   <input type="text" inputMode="decimal" value={rawQty} onChange={e => setRawQty(e.target.value)}
@@ -818,7 +830,7 @@ function AddMealSheet({ open, onClose, onSave, onDelete, theme, accent, dayLabel
 
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <span style={{ fontSize: 12, color: theme.muted }}>
-                    {selected.kcal.toFixed(0)} kcal/100g{unit === "portion" && serving ? ` · ${Math.round(grams)} g` : ""} → <span style={{ color: accent, fontWeight: 500, fontSize: 13 }}>{computedKcal} kcal</span>
+                    {selected.kcal.toFixed(0)} kcal/100{baseUnit === "ml" ? " ml" : "g"}{unit === "portion" && serving ? ` · ${Math.round(grams)} ${baseUnit === "ml" ? "ml" : "g"}` : ""} → <span style={{ color: accent, fontWeight: 500, fontSize: 13 }}>{computedKcal} kcal</span>
                   </span>
                   <button onClick={handleSave} disabled={!canSave}
                     style={{ height: 36, padding: "0 18px", borderRadius: 18, border: "none", background: canSave ? accent : theme.hairline, color: "#fff", fontFamily: "inherit", fontSize: 13, fontWeight: 500, cursor: canSave ? "pointer" : "default" }}>
@@ -869,7 +881,7 @@ function AddMealSheet({ open, onClose, onSave, onDelete, theme, accent, dayLabel
                 <div style={{ flex: 1, marginRight: 12 }}>
                   <div style={{ fontSize: 14, color: theme.text, lineHeight: 1.3 }}>{item.name}</div>
                   <div style={{ fontSize: 11, color: theme.fainter, marginTop: 2 }}>
-                    {item.local ? "base locale" : item.brand}
+                    {item.brand || (item.local ? "base locale" : "")}
                     {item.serving ? (item.local || item.brand ? " · " : "") + "portion " + item.serving.label : ""}
                   </div>
                 </div>
@@ -1150,9 +1162,10 @@ function App() {
   // Libellé de quantité affiché sur la ligne de repas
   const qtyLabel = m => {
     if (m.unit === "portion" && m.qty != null) {
-      return `×${m.qty}${m.servingSize ? " · " + Math.round(m.qty * m.servingSize) + " g" : ""}`;
+      const u = m.baseUnit === "ml" ? "ml" : "g";
+      return `×${m.qty}${m.servingSize ? " · " + Math.round(m.qty * m.servingSize) + " " + u : ""}`;
     }
-    if (m.unit === "g" && m.qty != null) return `${m.qty} g`;
+    if ((m.unit === "g" || m.unit === "ml") && m.qty != null) return `${m.qty} ${m.unit}`;
     return null;
   };
 
